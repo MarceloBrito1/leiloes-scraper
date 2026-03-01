@@ -128,6 +128,66 @@ body {
   grid-column: 1 / -1;
 }
 
+.preset-curtain {
+  width: 100%;
+  border: 1px solid #c7d8df;
+  border-radius: 12px;
+  background: #f4f9fa;
+  padding: 10px 12px;
+}
+
+.preset-curtain summary {
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: #204353;
+  list-style: none;
+}
+
+.preset-curtain summary::-webkit-details-marker {
+  display: none;
+}
+
+.preset-curtain summary::before {
+  content: "▾ ";
+  color: #2d6678;
+  font-weight: 800;
+}
+
+.preset-curtain:not([open]) summary::before {
+  content: "▸ ";
+}
+
+.preset-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.preset-btn {
+  border: 1px solid #9cb9c4;
+  background: #e8f2f5;
+  color: #173341;
+  padding: 8px 11px;
+  border-radius: 10px;
+  font-size: 0.88rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.preset-btn:hover {
+  border-color: #6e97a7;
+  background: #dcedf3;
+  transform: translateY(-1px);
+}
+
+.preset-note {
+  margin: 8px 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
 label {
   font-size: 0.85rem;
   color: var(--muted);

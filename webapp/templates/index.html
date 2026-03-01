@@ -26,6 +26,24 @@
         <h2>Nova Execucao</h2>
         <form method="post" action="{{ url_for('run_scrape') }}" id="run-form">
           <div class="field full">
+            <details class="preset-curtain" open>
+              <summary>Cortina de sites (3 opcoes rapidas)</summary>
+              <div class="preset-actions">
+                <button type="button" class="preset-btn" data-site="zuk" data-url="https://www.portalzuk.com.br/leilao-de-imoveis">
+                  Zuk
+                </button>
+                <button type="button" class="preset-btn" data-site="megaleiloes" data-url="https://www.megaleiloes.com.br/imoveis?pagina=1">
+                  MegaLeiloes
+                </button>
+                <button type="button" class="preset-btn" data-site="leeilon" data-url="https://www.leeilon.com.br/busca-leilao?page=1">
+                  Leeilon
+                </button>
+              </div>
+              <p class="preset-note">Clique em uma opcao para preencher URL e site automaticamente.</p>
+            </details>
+          </div>
+
+          <div class="field full">
             <label for="url">URL de busca</label>
             <input id="url" name="url" type="url" value="{{ form.url }}" placeholder="https://..." required />
           </div>
@@ -214,6 +232,20 @@
       (function () {
         var form = document.getElementById("run-form");
         var btn = document.getElementById("run-button");
+        var presetButtons = document.querySelectorAll(".preset-btn");
+        var urlInput = document.getElementById("url");
+        var siteSelect = document.getElementById("site");
+
+        presetButtons.forEach(function (pbtn) {
+          pbtn.addEventListener("click", function () {
+            var presetUrl = pbtn.getAttribute("data-url");
+            var presetSite = pbtn.getAttribute("data-site");
+            if (urlInput && presetUrl) urlInput.value = presetUrl;
+            if (siteSelect && presetSite) siteSelect.value = presetSite;
+            if (urlInput) urlInput.focus();
+          });
+        });
+
         if (!form || !btn) return;
         form.addEventListener("submit", function () {
           btn.disabled = true;
