@@ -214,6 +214,70 @@ detect_site_from_url <- function(url) {
   NA_character_
 }
 
+extract_embedded_url <- function(x) {
+  x <- normalize_ws(x)
+  if (is.na(x)) return(NA_character_)
+  dec <- suppressWarnings(utils::URLdecode(x))
+  if (!is.na(dec) && grepl("^https?://", dec, ignore.case = TRUE)) return(dec)
+  if (grepl("^https?://", x, ignore.case = TRUE)) return(x)
+  NA_character_
+}
+
+unwrap_tracking_url <- function(url, max_hops = 3L) {
+  cur <- url
+  for (i in seq_len(max_hops)) {
+    p <- httr::parse_url(cur)
+    q <- p$query %||% list()
+    keys <- c("url", "u", "target", "redirect", "redirect_url", "dest", "destination", "next", "to", "href")
+    cand <- NA_character_
+    for (k in keys) {
+      if (!is.null(q[[k]]) && nzchar(q[[k]])) {
+        cand <- extract_embedded_url(q[[k]])
+        if (!is.na(cand)) break
+      }
+    }
+    if (is.na(cand)) break
+    cur <- cand
+  }
+  cur
+}
+
+canonical_search_url <- function(url, site) {
+  u <- unwrap_tracking_url(url)
+  p <- httr::parse_url(u)
+  if (is.null(p$query)) p$query <- list()
+  path <- p$path %||% ""
+
+  if (site == "zuk") {
+    if (!grepl("^/?leilao-de-imoveis", path)) {
+      p$path <- "leilao-de-imoveis"
+    }
+    return(httr::build_url(p))
+  }
+
+  if (site == "megaleiloes") {
+    if (!grepl("^/?(imoveis|leiloes-judiciais|leiloes-extrajudiciais)", path)) {
+      p$path <- "imoveis"
+    }
+    if (is.null(p$query$pagina) || !nzchar(p$query$pagina)) {
+      p$query$pagina <- "1"
+    }
+    return(httr::build_url(p))
+  }
+
+  if (site == "leeilon") {
+    if (!grepl("^/?busca-leilao", path)) {
+      p$path <- "busca-leilao"
+    }
+    if (is.null(p$query$page) || !nzchar(p$query$page)) {
+      p$query$page <- "1"
+    }
+    return(httr::build_url(p))
+  }
+
+  u
+}
+
 normalize_auction_type <- function(x) {
   x <- tolower(normalize_ws(x))
   if (is.na(x)) return(NA_character_)
@@ -1096,6 +1160,8 @@ main <- function() {
       stop("Could not detect site from URL. Use --site leeilon|zuk|megaleiloes.")
     }
   }
+
+  opt$url <- canonical_search_url(opt$url, site = site)
 
   user_agent <- "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0 Safari/537.36"
   timeout_sec <- 90

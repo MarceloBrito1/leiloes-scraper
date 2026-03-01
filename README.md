@@ -7,6 +7,7 @@ Projeto separado para raspagem de oportunidades de leiloes imobiliarios.
 - Suporta `megaleiloes.com.br` com paginacao por `?pagina=`.
 - Suporta `leeilon.com.br` via endpoint dinamico oficial (server action), com paginacao por `page`.
 - Percorre todas as paginas por padrao (`--max-pages all`).
+- Faz sanitizacao automatica da URL de entrada (remove wrappers/redirecionadores e entra direto na rota de busca), reduzindo impacto de popups/anuncios de entrada.
 
 ## Filtros de relatorio
 Permite filtrar por:
