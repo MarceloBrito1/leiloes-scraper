@@ -26,6 +26,24 @@ Permite filtrar por:
 ## Requisitos
 - R (>= 4.2)
 - Pacotes R: `httr`, `xml2`, `jsonlite`, `stringr`
+- Python 3.10+ (para painel web)
+
+## Painel web (pagina local)
+Para usar como pagina da internet (rodando localmente):
+
+```powershell
+pip install -r requirements-web.txt
+powershell -ExecutionPolicy Bypass -File .\scripts\start_web.ps1
+```
+
+Depois abra: `http://127.0.0.1:8787`
+
+No painel voce consegue:
+- informar URL/site e filtros
+- informar usuario/senha (opcional) antes da raspagem
+- executar raspagem e ver preview em tabela
+- baixar `resultado`, `execucao.log` e `params.json`
+- reabrir execucoes anteriores salvas em `local_progress/`
 
 ## Uso direto
 ```bash

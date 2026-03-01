@@ -9,3 +9,7 @@ local_progress/*
 leeilon_chunks/
 live_leeilon.html
 smoke_*.csv
+
+# web app
+webapp/__pycache__/
+webapp/*.pyc

@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Leiloes Scraper Web</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  </head>
+  <body>
+    <div class="bg-shape bg-shape-a"></div>
+    <div class="bg-shape bg-shape-b"></div>
+
+    <header class="hero">
+      <h1>Leiloes Scraper</h1>
+      <p>Painel web para executar raspagem, filtros e login autenticado.</p>
+    </header>
+
+    <main class="layout">
+      <section class="panel form-panel">
+        <h2>Nova Execucao</h2>
+        <form method="post" action="{{ url_for('run_scrape') }}" id="run-form">
+          <div class="field full">
+            <label for="url">URL de busca</label>
+            <input id="url" name="url" type="url" value="{{ form.url }}" placeholder="https://..." required />
+          </div>
+
+          <div class="field">
+            <label for="site">Site</label>
+            <select id="site" name="site">
+              <option value="auto" {% if form.site == "auto" %}selected{% endif %}>auto</option>
+              <option value="zuk" {% if form.site == "zuk" %}selected{% endif %}>zuk</option>
+              <option value="megaleiloes" {% if form.site == "megaleiloes" %}selected{% endif %}>megaleiloes</option>
+              <option value="leeilon" {% if form.site == "leeilon" %}selected{% endif %}>leeilon</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="max_pages">Max pages</label>
+            <input id="max_pages" name="max_pages" type="text" value="{{ form.max_pages }}" placeholder="all ou 5" />
+          </div>
+
+          <div class="field">
+            <label for="sleep">Sleep (s)</label>
+            <input id="sleep" name="sleep" type="text" value="{{ form.sleep }}" />
+          </div>
+
+          <div class="field">
+            <label for="format">Formato</label>
+            <select id="format" name="format">
+              <option value="csv" {% if form.format == "csv" %}selected{% endif %}>csv</option>
+              <option value="json" {% if form.format == "json" %}selected{% endif %}>json</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="auction_type">Modalidade</label>
+            <select id="auction_type" name="auction_type">
+              <option value="any" {% if form.auction_type == "any" %}selected{% endif %}>any</option>
+              <option value="judicial" {% if form.auction_type == "judicial" %}selected{% endif %}>judicial</option>
+              <option value="extrajudicial" {% if form.auction_type == "extrajudicial" %}selected{% endif %}>extrajudicial</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="current_round">Fase atual</label>
+            <select id="current_round" name="current_round">
+              <option value="any" {% if form.current_round == "any" %}selected{% endif %}>any</option>
+              <option value="1" {% if form.current_round == "1" %}selected{% endif %}>1</option>
+              <option value="2" {% if form.current_round == "2" %}selected{% endif %}>2</option>
+              <option value="ended" {% if form.current_round == "ended" %}selected{% endif %}>ended</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="date_field">Campo de data</label>
+            <select id="date_field" name="date_field">
+              <option value="next" {% if form.date_field == "next" %}selected{% endif %}>next</option>
+              <option value="first" {% if form.date_field == "first" %}selected{% endif %}>first</option>
+              <option value="second" {% if form.date_field == "second" %}selected{% endif %}>second</option>
+              <option value="any" {% if form.date_field == "any" %}selected{% endif %}>any</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="date_from">Data inicial</label>
+            <input id="date_from" name="date_from" type="date" value="{{ form.date_from }}" />
+          </div>
+
+          <div class="field">
+            <label for="date_to">Data final</label>
+            <input id="date_to" name="date_to" type="date" value="{{ form.date_to }}" />
+          </div>
+
+          <div class="field">
+            <label for="login_user">Usuario (opcional)</label>
+            <input id="login_user" name="login_user" type="text" value="{{ form.login_user }}" autocomplete="username" />
+          </div>
+
+          <div class="field">
+            <label for="login_pass">Senha (opcional)</label>
+            <input id="login_pass" name="login_pass" type="password" value="" autocomplete="current-password" />
+          </div>
+
+          <div class="actions full">
+            <button type="submit" id="run-button">Executar raspagem</button>
+          </div>
+        </form>
+      </section>
+
+      <aside class="panel side-panel">
+        <h2>Execucoes recentes</h2>
+        {% if runs %}
+          <ul class="run-list">
+            {% for r in runs %}
+              <li>
+                <a href="{{ url_for('open_run', run_id=r.run_id) }}">
+                  <strong>{{ r.run_id }}</strong>
+                  <span>{{ r.site }} | {{ r.format }}</span>
+                  <span>exit {{ r.exit_code }}{% if r.record_count is not none %} | {{ r.record_count }} regs{% endif %}</span>
+                </a>
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="muted">Ainda nao existem execucoes.</p>
+        {% endif %}
+      </aside>
+    </main>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <section class="panel messages">
+          {% for category, message in messages %}
+            <div class="msg msg-{{ category }}">{{ message }}</div>
+          {% endfor %}
+        </section>
+      {% endif %}
+    {% endwith %}
+
+    {% if result %}
+      <section class="panel result-head">
+        <h2>Resultado: {{ result.run_id }}</h2>
+        <div class="summary-grid">
+          <div class="kpi">
+            <span>Status</span>
+            <strong class="{% if result.success %}ok{% else %}err{% endif %}">
+              {% if result.success %}OK{% else %}ERRO{% endif %}
+            </strong>
+          </div>
+          <div class="kpi">
+            <span>Exit code</span>
+            <strong>{{ result.exit_code }}</strong>
+          </div>
+          <div class="kpi">
+            <span>Registros</span>
+            <strong>{{ result.row_count if result.row_count is not none else "-" }}</strong>
+          </div>
+        </div>
+
+        <div class="download-row">
+          {% if result.out_file_name %}
+            <a href="{{ url_for('download_file', run_id=result.run_id, filename=result.out_file_name) }}">Baixar resultado</a>
+          {% endif %}
+          {% if result.log_file_name %}
+            <a href="{{ url_for('download_file', run_id=result.run_id, filename=result.log_file_name) }}">Baixar log</a>
+          {% endif %}
+          {% if result.meta_file_name %}
+            <a href="{{ url_for('download_file', run_id=result.run_id, filename=result.meta_file_name) }}">Baixar params</a>
+          {% endif %}
+        </div>
+      </section>
+
+      {% if result.columns and result.preview_rows %}
+        <section class="panel table-panel">
+          <h2>Preview (primeiras {{ result.preview_rows|length }} linhas)</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  {% for c in result.columns %}
+                    <th>{{ c }}</th>
+                  {% endfor %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in result.preview_rows %}
+                  <tr>
+                    {% for c in result.columns %}
+                      <td title="{{ row.get(c, '') }}">{{ row.get(c, '') }}</td>
+                    {% endfor %}
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      {% endif %}
+
+      {% if result.log_tail %}
+        <section class="panel log-panel">
+          <h2>Log (ultimas linhas)</h2>
+          <pre>{{ result.log_tail }}</pre>
+        </section>
+      {% endif %}
+    {% endif %}
+
+    <script>
+      (function () {
+        var form = document.getElementById("run-form");
+        var btn = document.getElementById("run-button");
+        if (!form || !btn) return;
+        form.addEventListener("submit", function () {
+          btn.disabled = true;
+          btn.textContent = "Executando...";
+        });
+      })();
+    </script>
+  </body>
+</html>
