@@ -5,8 +5,20 @@ param(
   [ValidateSet('auto','zuk','megaleiloes','leeilon')]
   [string]$Site = 'auto',
 
-  [int]$MaxPages = 3,
+  [string]$MaxPages = 'all',
   [double]$Sleep = 0.75,
+
+  [ValidateSet('any','judicial','extrajudicial')]
+  [string]$AuctionType = 'any',
+
+  [ValidateSet('any','1','2','ended')]
+  [string]$CurrentRound = 'any',
+
+  [string]$DateFrom = '',
+  [string]$DateTo = '',
+
+  [ValidateSet('next','first','second','any')]
+  [string]$DateField = 'next',
 
   [ValidateSet('csv','json')]
   [string]$Format = 'csv',
@@ -41,10 +53,16 @@ $args = @(
   '--site', $Site,
   '--max-pages', "$MaxPages",
   '--sleep', "$Sleep",
+  '--auction-type', $AuctionType,
+  '--current-round', $CurrentRound,
+  '--date-field', $DateField,
   '--format', $Format,
   '--out', $outFile,
   '--verbose'
 )
+
+if (-not [string]::IsNullOrWhiteSpace($DateFrom)) { $args += @('--date-from', $DateFrom) }
+if (-not [string]::IsNullOrWhiteSpace($DateTo)) { $args += @('--date-to', $DateTo) }
 
 "[START] $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz')" | Tee-Object -FilePath $logFile -Append | Out-Null
 "Comando: Rscript $($args -join ' ')" | Tee-Object -FilePath $logFile -Append | Out-Null
@@ -62,6 +80,11 @@ $meta = [ordered]@{
   site = $Site
   max_pages = $MaxPages
   sleep = $Sleep
+  auction_type = $AuctionType
+  current_round = $CurrentRound
+  date_from = $DateFrom
+  date_to = $DateTo
+  date_field = $DateField
   format = $Format
   output_file = $outFile
   log_file = $logFile

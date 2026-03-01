@@ -84,10 +84,17 @@ parse_money_br <- function(x) {
 parse_datetime_br <- function(x) {
   x <- normalize_ws(x)
   if (is.na(x)) return(as.POSIXct(NA))
-  m <- stringr::str_match(x, "(\\d{2}/\\d{2}/\\d{4})\\s*(?:as|ÃƒÂ s)\\s*(\\d{2}:\\d{2})")
-  if (all(is.na(m))) return(as.POSIXct(NA))
-  dt <- paste(m[, 2], m[, 3])
-  as.POSIXct(dt, format = "%d/%m/%Y %H:%M", tz = "America/Sao_Paulo")
+  m <- stringr::str_match(x, "(\\d{2}/\\d{2}/\\d{4})\\s*(?:as|Ã s)\\s*(\\d{2}:\\d{2})")
+  if (!all(is.na(m))) {
+    dt <- paste(m[, 2], m[, 3])
+    return(as.POSIXct(dt, format = "%d/%m/%Y %H:%M", tz = "America/Sao_Paulo"))
+  }
+
+  d <- stringr::str_match(x, "(\\d{2}/\\d{2}/\\d{4})")
+  if (!all(is.na(d))) {
+    return(as.POSIXct(d[, 2], format = "%d/%m/%Y", tz = "America/Sao_Paulo"))
+  }
+  as.POSIXct(NA)
 }
 
 fmt_datetime <- function(x) {
@@ -186,10 +193,10 @@ post_form <- function(url, form, user_agent, timeout_sec = 60, headers = list(),
 
 normalize_site <- function(site) {
   s <- tolower(normalize_ws(site) %||% "auto")
-  s <- gsub("ÃƒÂ£", "a", s, fixed = TRUE)
-  s <- gsub("ÃƒÂ©", "e", s, fixed = TRUE)
-  s <- gsub("ÃƒÂ§", "c", s, fixed = TRUE)
-  s <- gsub("ÃƒÂµ", "o", s, fixed = TRUE)
+  s <- gsub("ÃƒÆ’Ã‚Â£", "a", s, fixed = TRUE)
+  s <- gsub("ÃƒÆ’Ã‚Â©", "e", s, fixed = TRUE)
+  s <- gsub("ÃƒÆ’Ã‚Â§", "c", s, fixed = TRUE)
+  s <- gsub("ÃƒÆ’Ã‚Âµ", "o", s, fixed = TRUE)
   s <- gsub("-", "", s, fixed = TRUE)
   s <- gsub("_", "", s, fixed = TRUE)
   if (s %in% c("auto")) return("auto")
@@ -205,6 +212,185 @@ detect_site_from_url <- function(url) {
   if (grepl("megaleiloes\\.com\\.br$", host)) return("megaleiloes")
   if (grepl("leeilon\\.com\\.br$", host)) return("leeilon")
   NA_character_
+}
+
+normalize_auction_type <- function(x) {
+  x <- tolower(normalize_ws(x))
+  if (is.na(x)) return(NA_character_)
+  if (grepl("extrajud", x)) return("extrajudicial")
+  if (grepl("judicial", x)) return("judicial")
+  NA_character_
+}
+
+infer_zuk_auction_type <- function(title, address = NA_character_) {
+  txt <- paste(
+    normalize_ws(title) %||% "",
+    normalize_ws(address) %||% "",
+    collapse = " "
+  )
+  txt <- tolower(txt)
+  if (!nzchar(txt)) return(NA_character_)
+  if (grepl("extrajudicial", txt)) return("extrajudicial")
+  if (grepl("judicial|tribunal|justi[cÃ§]a|vara|tjsp|tj[a-z]{2}", txt)) return("judicial")
+  if (grepl("banco|caixa|santander|bradesco|itau|sicoob|financeira|cooperativa", txt)) return("extrajudicial")
+  NA_character_
+}
+
+parse_iso_datetime <- function(x) {
+  x <- normalize_ws(x)
+  if (is.na(x)) return(as.POSIXct(NA))
+  suppressWarnings(as.POSIXct(x, format = "%Y-%m-%d %H:%M:%S %z", tz = "America/Sao_Paulo"))
+}
+
+safe_min_future_dt <- function(dt1, dt2, now) {
+  cands <- c(dt1, dt2)
+  cands <- cands[!is.na(cands) & cands >= now]
+  if (length(cands) == 0) return(as.POSIXct(NA))
+  min(cands)
+}
+
+compute_current_round <- function(dt1, dt2, now) {
+  if (!is.na(dt1) && now <= dt1) return("1")
+  if (!is.na(dt2) && now <= dt2) return("2")
+  if (!is.na(dt1) || !is.na(dt2)) return("ended")
+  NA_character_
+}
+
+parse_date_ymd <- function(x, arg_name) {
+  x <- normalize_ws(x)
+  if (is.na(x)) return(as.Date(NA))
+  d <- suppressWarnings(as.Date(x, format = "%Y-%m-%d"))
+  if (is.na(d)) stop(arg_name, " must be in YYYY-MM-DD format")
+  d
+}
+
+in_date_window <- function(d, from, to) {
+  if (is.na(d)) return(FALSE)
+  if (!is.na(from) && d < from) return(FALSE)
+  if (!is.na(to) && d > to) return(FALSE)
+  TRUE
+}
+
+enrich_results <- function(df) {
+  if (nrow(df) == 0) {
+    df$auction_type_norm <- character(0)
+    df$current_round <- character(0)
+    df$next_auction_datetime <- character(0)
+    return(df)
+  }
+
+  dt1 <- as.POSIXct(vapply(df$auction_datetime_1, function(x) parse_iso_datetime(x), as.POSIXct(NA)))
+  dt2 <- as.POSIXct(vapply(df$auction_datetime_2, function(x) parse_iso_datetime(x), as.POSIXct(NA)))
+
+  missing_1 <- is.na(dt1)
+  missing_2 <- is.na(dt2)
+  if (any(missing_1)) {
+    dt1[missing_1] <- as.POSIXct(vapply(df$auction_date_1[missing_1], function(x) parse_datetime_br(x), as.POSIXct(NA)))
+  }
+  if (any(missing_2)) {
+    dt2[missing_2] <- as.POSIXct(vapply(df$auction_date_2[missing_2], function(x) parse_datetime_br(x), as.POSIXct(NA)))
+  }
+
+  now <- as.POSIXct(Sys.time(), tz = "America/Sao_Paulo")
+  next_dt <- as.POSIXct(vapply(seq_len(nrow(df)), function(i) safe_min_future_dt(dt1[i], dt2[i], now), as.POSIXct(NA)))
+  round_vec <- vapply(seq_len(nrow(df)), function(i) compute_current_round(dt1[i], dt2[i], now), character(1))
+
+  type_norm <- vapply(df$auction_type, normalize_auction_type, character(1))
+  idx_zuk <- which((df$site %||% "") == "zuk" & is.na(type_norm))
+  if (length(idx_zuk) > 0) {
+    inf <- vapply(
+      idx_zuk,
+      function(i) infer_zuk_auction_type(df$title[i] %||% NA_character_, df$address[i] %||% NA_character_),
+      character(1)
+    )
+    type_norm[idx_zuk] <- inf
+  }
+
+  df$auction_type_norm <- type_norm
+  df$current_round <- round_vec
+  df$next_auction_datetime <- vapply(next_dt, fmt_datetime, character(1))
+  df
+}
+
+apply_report_filters <- function(df, opt, verbose = FALSE) {
+  df <- enrich_results(df)
+  if (nrow(df) == 0) return(df)
+
+  keep <- rep(TRUE, nrow(df))
+
+  if (!is.null(opt$auction_type) && opt$auction_type != "any") {
+    keep <- keep & (!is.na(df$auction_type_norm) & df$auction_type_norm == opt$auction_type)
+  }
+
+  if (!is.null(opt$current_round) && opt$current_round != "any") {
+    keep <- keep & (!is.na(df$current_round) & df$current_round == opt$current_round)
+  }
+
+  from_date <- parse_date_ymd(opt$date_from %||% NA_character_, "--date-from")
+  to_date <- parse_date_ymd(opt$date_to %||% NA_character_, "--date-to")
+  if (!is.na(from_date) || !is.na(to_date)) {
+    dt1 <- as.POSIXct(vapply(df$auction_datetime_1, function(x) parse_iso_datetime(x), as.POSIXct(NA)))
+    dt2 <- as.POSIXct(vapply(df$auction_datetime_2, function(x) parse_iso_datetime(x), as.POSIXct(NA)))
+    d1 <- as.Date(dt1)
+    d2 <- as.Date(dt2)
+    dn <- as.Date(as.POSIXct(vapply(df$next_auction_datetime, function(x) parse_iso_datetime(x), as.POSIXct(NA))))
+
+    field <- opt$date_field %||% "next"
+    cond <- rep(FALSE, nrow(df))
+    if (field == "first") {
+      cond <- vapply(d1, in_date_window, logical(1), from = from_date, to = to_date)
+    } else if (field == "second") {
+      cond <- vapply(d2, in_date_window, logical(1), from = from_date, to = to_date)
+    } else if (field == "next") {
+      cond <- vapply(dn, in_date_window, logical(1), from = from_date, to = to_date)
+    } else if (field == "any") {
+      c1 <- vapply(d1, in_date_window, logical(1), from = from_date, to = to_date)
+      c2 <- vapply(d2, in_date_window, logical(1), from = from_date, to = to_date)
+      cond <- c1 | c2
+    } else {
+      stop("Unsupported --date-field: ", field)
+    }
+    keep <- keep & cond
+  }
+
+  out <- df[keep, , drop = FALSE]
+  log_msg("Filtro aplicado: ", nrow(df), " -> ", nrow(out), " registros", verbose = verbose)
+  out
+}
+
+apply_site_native_filters <- function(url, site, opt, verbose = FALSE) {
+  out <- url
+  if (is.null(opt$auction_type) || opt$auction_type == "any") return(out)
+
+  if (site == "megaleiloes") {
+    p <- httr::parse_url(out)
+    p$path <- if (opt$auction_type == "judicial") "leiloes-judiciais" else "leiloes-extrajudiciais"
+    if (is.null(p$query)) p$query <- list()
+    if (is.null(p$query$pagina) || !nzchar(p$query$pagina)) p$query$pagina <- "1"
+    out <- httr::build_url(p)
+    log_msg("MegaLeiloes: filtro nativo aplicado (auction_type=", opt$auction_type, "): ", out, verbose = verbose)
+    return(out)
+  }
+
+  if (site == "zuk") {
+    p <- httr::parse_url(out)
+    if (is.null(p$query)) p$query <- list()
+    p$query$comitente_judicial <- if (opt$auction_type == "judicial") "1" else "0"
+    out <- httr::build_url(p)
+    log_msg("Zuk: tentativa de filtro nativo aplicada (comitente_judicial=", p$query$comitente_judicial, "): ", out, verbose = verbose)
+    return(out)
+  }
+
+  if (site == "leeilon") {
+    p <- httr::parse_url(out)
+    if (is.null(p$query)) p$query <- list()
+    p$query$modalidades <- if (opt$auction_type == "judicial") "Judicial" else "Extrajudicial"
+    out <- httr::build_url(p)
+    log_msg("Leeilon: filtro nativo aplicado (modalidades=", p$query$modalidades, "): ", out, verbose = verbose)
+    return(out)
+  }
+
+  out
 }
 
 extract_zuk_cards <- function(doc, source_url) {
@@ -323,7 +509,8 @@ extract_zuk_total <- function(html_text) {
   if (length(v) == 0) NA_integer_ else max(v)
 }
 
-scrape_zuk <- function(url, max_pages = 3L, sleep_sec = 0.75, user_agent, timeout_sec, verbose = FALSE) {
+scrape_zuk <- function(url, max_pages = NA_integer_, sleep_sec = 0.75, user_agent, timeout_sec, verbose = FALSE) {
+  page_limit <- if (is.na(max_pages)) Inf else as.numeric(max_pages)
   first <- fetch_html(url, user_agent = user_agent, timeout_sec = timeout_sec, verbose = verbose)
   all_rows <- extract_zuk_cards(first$doc, source_url = url)
 
@@ -332,14 +519,14 @@ scrape_zuk <- function(url, max_pages = 3L, sleep_sec = 0.75, user_agent, timeou
   total_expected <- extract_zuk_total(first$text)
   log_msg("Zuk: lotes iniciais=", nrow(all_rows), "; total esperado=", total_expected %||% NA, verbose = verbose)
 
-  if (is.na(token) || max_pages <= 1) {
+  if (is.na(token) || page_limit <= 1) {
     return(dedupe_results(all_rows))
   }
 
   endpoint <- "https://www.portalzuk.com.br/leilao-de-imoveis/mais"
   page_idx <- 2L
 
-  while (page_idx <= max_pages) {
+  while (page_idx <= page_limit) {
     loaded <- nrow(all_rows)
     if (!is.na(total_expected) && loaded >= total_expected) break
 
@@ -481,17 +668,21 @@ extract_mega_last_page <- function(doc, fallback = 1L) {
   as.integer(fallback)
 }
 
-scrape_megaleiloes <- function(url, max_pages = 3L, sleep_sec = 0.75, user_agent, timeout_sec, verbose = FALSE) {
+scrape_megaleiloes <- function(url, max_pages = NA_integer_, sleep_sec = 0.75, user_agent, timeout_sec, verbose = FALSE) {
+  page_limit <- if (is.na(max_pages)) Inf else as.numeric(max_pages)
   start_page <- suppressWarnings(as.integer(parse_query_value(url, "pagina")))
   if (is.na(start_page) || start_page < 1L) start_page <- 1L
 
   all_rows <- empty_results()
   last_page <- NA_integer_
+  page <- start_page
+  pages_done <- 0L
 
-  for (i in seq_len(max_pages)) {
-    page <- start_page + i - 1L
+  repeat {
+    if (pages_done >= page_limit) break
     page_url <- set_query_value(url, "pagina", page)
     fetched <- fetch_html(page_url, user_agent = user_agent, timeout_sec = timeout_sec, verbose = verbose)
+    pages_done <- pages_done + 1L
 
     if (is.na(last_page)) {
       last_page <- extract_mega_last_page(fetched$doc, fallback = page)
@@ -502,58 +693,243 @@ scrape_megaleiloes <- function(url, max_pages = 3L, sleep_sec = 0.75, user_agent
     log_msg("MegaLeiloes: pagina ", page, " -> ", nrow(rows), " registros", verbose = verbose)
     if (nrow(rows) == 0) break
 
+    before <- nrow(all_rows)
     all_rows <- dedupe_results(rbind_safe(all_rows, rows))
+    added <- nrow(all_rows) - before
+    if (added <= 0 && is.na(last_page)) {
+      log_msg("MegaLeiloes: nenhum novo registro; encerrando por seguranca.", verbose = verbose)
+      break
+    }
     if (!is.na(last_page) && page >= last_page) break
     if (sleep_sec > 0) Sys.sleep(sleep_sec)
+    page <- page + 1L
   }
 
   dedupe_results(all_rows)
 }
 
-scrape_leeilon <- function(url, user_agent, timeout_sec, verbose = FALSE) {
-  fetched <- fetch_html(url, user_agent = user_agent, timeout_sec = timeout_sec, verbose = verbose)
-  links <- xml2::xml_find_all(
-    fetched$doc,
-    ".//a[contains(@href,'/imovel') or contains(@href,'/lote') or contains(@href,'/imoveis/')]"
-  )
-  hrefs <- unique(na.omit(vapply(links, function(n) safe_attr(n, "href"), character(1))))
-  hrefs <- hrefs[grepl("/imovel|/lote|/imoveis/", hrefs)]
+slugify_ascii <- function(x) {
+  x <- normalize_ws(x)
+  if (is.na(x)) return(NA_character_)
+  y <- suppressWarnings(iconv(x, from = "", to = "ASCII//TRANSLIT"))
+  y <- normalize_ws(y)
+  if (is.na(y)) return(NA_character_)
+  y <- tolower(y)
+  y <- gsub("[^a-z0-9\\s-]", "", y)
+  y <- gsub("\\s+", "-", y)
+  y <- gsub("-{2,}", "-", y)
+  y <- gsub("^-|-$", "", y)
+  if (!nzchar(y)) NA_character_ else y
+}
 
-  if (length(hrefs) == 0) {
-    log_msg("Leeilon: nenhum card estatico encontrado. Site usa renderizacao dinamica.", verbose = TRUE)
-    return(empty_results())
+leeilon_action_tree_header <- function(url) {
+  p <- httr::parse_url(url)
+  seg <- Filter(nzchar, strsplit(p$path %||% "", "/", fixed = TRUE)[[1]])
+  slug <- if (length(seg) >= 1) seg[[1]] else "busca-leilao"
+  tree_raw <- sprintf(
+    '["",{"children":["(public)",{"children":["(busca)",{"children":[["slug","%s","c"],{"children":["__PAGE__",{},null,null]},null,null]},null,null]},null,null]},null,null,true]',
+    slug
+  )
+  utils::URLencode(tree_raw, reserved = TRUE)
+}
+
+parse_leeilon_action_payload <- function(txt) {
+  lines <- unlist(strsplit(txt %||% "", "\n", fixed = TRUE), use.names = FALSE)
+  if (length(lines) == 0) return(NULL)
+
+  err <- lines[grepl("^[0-9]+:E\\{", lines)]
+  if (length(err) > 0) {
+    stop("Leeilon action returned an error payload: ", err[[1]])
   }
 
+  json_lines <- lines[grepl("^[0-9]+:\\{", lines)]
+  if (length(json_lines) == 0) return(NULL)
+
+  idx <- which(grepl("\"imoveis\"\\s*:", json_lines))[1]
+  line <- if (!is.na(idx)) json_lines[[idx]] else json_lines[[length(json_lines)]]
+  line <- sub("^[0-9]+:", "", line)
+  jsonlite::fromJSON(line, simplifyDataFrame = FALSE)
+}
+
+leeilon_listing_url <- function(item) {
+  id <- normalize_ws(item$id %||% NA_character_)
+  if (is.na(id)) return(NA_character_)
+  estado <- toupper(gsub("[^A-Za-z0-9-]", "", normalize_ws(item$estado %||% "")))
+  cidade <- slugify_ascii(item$cidade %||% NA_character_)
+  titulo <- slugify_ascii(item$titulo_propriedade %||% NA_character_)
+  if (!nzchar(estado) || is.na(cidade) || is.na(titulo)) return(NA_character_)
+  paste0("https://www.leeilon.com.br/imovel-em-leilao/", estado, "/", cidade, "/", titulo, "/", id)
+}
+
+extract_leeilon_rows <- function(items, source_url) {
+  if (length(items) == 0) return(empty_results())
+  if (!is.list(items)) return(empty_results())
+
   scraped_at <- format(Sys.time(), "%Y-%m-%d %H:%M:%S %z")
-  rows <- lapply(hrefs, function(h) {
-    listing_url <- make_absolute_url(url, h)
-    data.frame(
+  rows <- vector("list", length(items))
+
+  for (i in seq_along(items)) {
+    item <- items[[i]]
+    listing_url <- leeilon_listing_url(item)
+    listing_id <- normalize_ws(item$id %||% NA_character_)
+    if (is.na(listing_id)) listing_id <- extract_id_from_url(listing_url)
+
+    city <- normalize_ws(item$cidade %||% NA_character_)
+    uf <- normalize_ws(item$estado %||% NA_character_)
+    city_uf <- if (!is.na(city) && !is.na(uf)) paste(city, uf, sep = "/") else normalize_ws(paste(city, uf))
+
+    endereco <- normalize_ws(item$endereco %||% NA_character_)
+    bairro <- normalize_ws(item$bairro %||% NA_character_)
+    address_parts <- c(endereco, bairro, city_uf)
+    address_parts <- address_parts[!is.na(address_parts)]
+    address <- if (length(address_parts) > 0) paste(address_parts, collapse = " | ") else NA_character_
+
+    auction_date_1 <- normalize_ws(item$data_1_praca %||% NA_character_)
+    auction_date_2 <- normalize_ws(item$data_2_praca %||% NA_character_)
+    dt1 <- parse_datetime_br(auction_date_1)
+    dt2 <- parse_datetime_br(auction_date_2)
+
+    price_1 <- parse_money_br(item$valor_1_praca %||% item$lance_inicial %||% NA_character_)
+    price_2 <- parse_money_br(item$valor_2_praca %||% NA_character_)
+    min_price <- suppressWarnings(min(c(price_1, price_2), na.rm = TRUE))
+    if (!is.finite(min_price)) min_price <- NA_real_
+
+    rows[[i]] <- data.frame(
       site = "leeilon",
-      listing_id = extract_id_from_url(listing_url),
-      title = NA_character_,
-      property_type = NA_character_,
-      city_uf = NA_character_,
-      address = NA_character_,
-      area_info = NA_character_,
-      auction_type = NA_character_,
-      lot = NA_character_,
+      listing_id = listing_id,
+      title = normalize_ws(item$titulo_propriedade %||% NA_character_),
+      property_type = normalize_ws(item$tipo_propriedade %||% NA_character_),
+      city_uf = city_uf,
+      address = address,
+      area_info = normalize_ws(item$descricao_propriedade %||% NA_character_),
+      auction_type = normalize_ws(item$tipo_leilao %||% NA_character_),
+      lot = normalize_ws(item$numero_processo %||% NA_character_),
       status = NA_character_,
-      price_1 = NA_real_,
-      price_2 = NA_real_,
-      min_price = NA_real_,
-      auction_date_1 = NA_character_,
-      auction_date_2 = NA_character_,
-      auction_datetime_1 = NA_character_,
-      auction_datetime_2 = NA_character_,
-      image_url = NA_character_,
+      price_1 = price_1,
+      price_2 = price_2,
+      min_price = min_price,
+      auction_date_1 = auction_date_1,
+      auction_date_2 = auction_date_2,
+      auction_datetime_1 = fmt_datetime(dt1),
+      auction_datetime_2 = fmt_datetime(dt2),
+      image_url = normalize_ws(item$imagem_propriedade %||% NA_character_),
       listing_url = listing_url,
-      source_url = url,
+      source_url = source_url,
       scraped_at = scraped_at,
       stringsAsFactors = FALSE
     )
-  })
+  }
 
   dedupe_results(do.call(rbind, rows))
+}
+
+fetch_leeilon_action <- function(page_url, query, action_id, tree_header, user_agent, timeout_sec, verbose = FALSE) {
+  body_obj <- lapply(query %||% list(), function(v) {
+    txt <- normalize_ws(as.character(v))
+    if (is.na(txt)) return(NA_character_)
+    gsub("+", " ", txt, fixed = TRUE)
+  })
+  body_obj <- body_obj[!vapply(body_obj, function(v) is.na(v) || !nzchar(v), logical(1))]
+  body_json <- jsonlite::toJSON(list(body_obj), auto_unbox = TRUE, null = "null")
+
+  log_msg("POST ", page_url, " (Leeilon action page=", body_obj$page %||% "?", ")", verbose = verbose)
+  resp <- httr::POST(
+    page_url,
+    httr::user_agent(user_agent),
+    httr::timeout(timeout_sec),
+    httr::add_headers(
+      Accept = "text/x-component",
+      `next-action` = action_id,
+      `next-router-state-tree` = tree_header,
+      Referer = page_url,
+      `Content-Type` = "text/plain;charset=UTF-8"
+    ),
+    body = body_json,
+    encode = "raw"
+  )
+
+  txt <- httr::content(resp, as = "text", encoding = "UTF-8")
+  status <- httr::status_code(resp)
+  if (status >= 400) {
+    stop("Leeilon action HTTP ", status, " for ", page_url, "; payload=", substr(txt, 1, 250))
+  }
+  payload <- parse_leeilon_action_payload(txt)
+  if (is.null(payload)) {
+    stop("Leeilon action returned an unrecognized payload for ", page_url)
+  }
+  payload
+}
+
+scrape_leeilon <- function(url, max_pages = NA_integer_, sleep_sec = 0.75, user_agent, timeout_sec, verbose = FALSE) {
+  page_limit <- if (is.na(max_pages)) Inf else as.numeric(max_pages)
+  start_page <- suppressWarnings(as.integer(parse_query_value(url, "page")))
+  if (is.na(start_page) || start_page < 1L) start_page <- 1L
+
+  action_id <- "40933a495f66da989a9e402fa0b5fc34dab540b470"
+  tree_header <- leeilon_action_tree_header(url)
+  all_rows <- empty_results()
+  last_page <- NA_integer_
+  page <- start_page
+  pages_done <- 0L
+
+  repeat {
+    if (pages_done >= page_limit) break
+    page_url <- set_query_value(url, "page", page)
+    query <- httr::parse_url(page_url)$query %||% list()
+    query$page <- as.character(page)
+
+    payload <- fetch_leeilon_action(
+      page_url = page_url,
+      query = query,
+      action_id = action_id,
+      tree_header = tree_header,
+      user_agent = user_agent,
+      timeout_sec = timeout_sec,
+      verbose = verbose
+    )
+    pages_done <- pages_done + 1L
+
+    tp <- suppressWarnings(as.integer(payload$total_pages %||% NA_integer_))
+    if (is.na(last_page) && !is.na(tp)) {
+      last_page <- tp
+      log_msg("Leeilon: ultima pagina detectada=", last_page, verbose = verbose)
+    }
+
+    rows <- extract_leeilon_rows(payload$imoveis %||% list(), source_url = page_url)
+    log_msg("Leeilon: pagina ", page, " -> ", nrow(rows), " registros", verbose = verbose)
+    if (nrow(rows) == 0) break
+
+    before <- nrow(all_rows)
+    all_rows <- dedupe_results(rbind_safe(all_rows, rows))
+    added <- nrow(all_rows) - before
+    if (added <= 0 && page > start_page) {
+      log_msg("Leeilon: nenhum novo registro; encerrando por seguranca.", verbose = verbose)
+      break
+    }
+
+    if (!is.na(last_page) && page >= last_page) break
+    if (sleep_sec > 0) Sys.sleep(sleep_sec)
+    page <- page + 1L
+  }
+
+  dedupe_results(all_rows)
+}
+
+parse_max_pages_arg <- function(val) {
+  txt <- tolower(trimws(as.character(val)))
+  if (!nzchar(txt)) return(NA_integer_)
+  if (txt %in% c("all", "todas", "tudo", "0", "-1", "inf", "infinite", "max")) {
+    return(NA_integer_)
+  }
+  n <- suppressWarnings(as.integer(txt))
+  if (is.na(n)) {
+    stop("--max-pages must be an integer >= 1, or one of: all, 0, -1, inf")
+  }
+  n
+}
+
+max_pages_label <- function(x) {
+  if (is.na(x)) "all" else as.character(x)
 }
 
 usage <- function() {
@@ -562,8 +938,13 @@ usage <- function() {
     "  Rscript scripts/scrape_leiloes.R --url <URL> [opcoes]\n\n",
     "Opcoes:\n",
     "  --site <auto|leeilon|zuk|megaleiloes>   Site alvo (padrao: auto)\n",
-    "  --max-pages <N>                          Maximo de paginas/blocos (padrao: 3)\n",
+    "  --max-pages <N|all>                      Maximo de paginas/blocos (padrao: all)\n",
     "  --sleep <segundos>                       Espera entre requisicoes (padrao: 0.75)\n",
+    "  --auction-type <any|judicial|extrajudicial>  Filtra por modalidade\n",
+    "  --current-round <any|1|2|ended>          Filtra pela fase atual do leilao\n",
+    "  --date-from <YYYY-MM-DD>                 Inicio da janela de data\n",
+    "  --date-to <YYYY-MM-DD>                   Fim da janela de data\n",
+    "  --date-field <next|first|second|any>     Campo de data para filtro (padrao: next)\n",
     "  --format <csv|json>                      Formato de saida (padrao: csv)\n",
     "  --out <arquivo>                          Caminho do arquivo de saida\n",
     "  --verbose                                Logs detalhados (padrao: ligado)\n",
@@ -571,7 +952,9 @@ usage <- function() {
     "  --help                                   Mostra esta ajuda\n\n",
     "Exemplos:\n",
     "  Rscript scripts/scrape_leiloes.R --url \"https://www.portalzuk.com.br/leilao-de-imoveis\"\n",
-    "  Rscript scripts/scrape_leiloes.R --url \"https://www.megaleiloes.com.br/imoveis?pagina=1\" --site megaleiloes --max-pages 5\n",
+    "  Rscript scripts/scrape_leiloes.R --url \"https://www.megaleiloes.com.br/imoveis?pagina=1\" --site megaleiloes\n",
+    "  Rscript scripts/scrape_leiloes.R --url \"https://www.portalzuk.com.br/leilao-de-imoveis\" --site zuk --max-pages 5\n",
+    "  Rscript scripts/scrape_leiloes.R --url \"https://www.megaleiloes.com.br/imoveis\" --auction-type judicial --current-round 2 --date-from 2026-03-01 --date-to 2026-03-31\n",
     sep = ""
   )
 }
@@ -580,8 +963,13 @@ parse_args <- function(args) {
   opt <- list(
     url = NULL,
     site = "auto",
-    max_pages = 3L,
+    max_pages = NA_integer_,
     sleep = 0.75,
+    auction_type = "any",
+    current_round = "any",
+    date_from = NA_character_,
+    date_to = NA_character_,
+    date_field = "next",
     format = "csv",
     out = NULL,
     verbose = TRUE,
@@ -617,9 +1005,19 @@ parse_args <- function(args) {
       } else if (key == "site") {
         opt$site <- val
       } else if (key == "max-pages") {
-        opt$max_pages <- as.integer(val)
+        opt$max_pages <- parse_max_pages_arg(val)
       } else if (key == "sleep") {
         opt$sleep <- as.numeric(val)
+      } else if (key == "auction-type") {
+        opt$auction_type <- tolower(trimws(val))
+      } else if (key == "current-round") {
+        opt$current_round <- tolower(trimws(val))
+      } else if (key == "date-from") {
+        opt$date_from <- val
+      } else if (key == "date-to") {
+        opt$date_to <- val
+      } else if (key == "date-field") {
+        opt$date_field <- tolower(trimws(val))
       } else if (key == "format") {
         opt$format <- tolower(val)
       } else if (key == "out") {
@@ -671,7 +1069,7 @@ main <- function() {
   if (!grepl("^https?://", opt$url, ignore.case = TRUE)) {
     stop("URL must start with http:// or https://")
   }
-  if (is.na(opt$max_pages) || opt$max_pages < 1) {
+  if (!is.na(opt$max_pages) && opt$max_pages < 1) {
     stop("--max-pages must be >= 1")
   }
   if (is.na(opt$sleep) || opt$sleep < 0) {
@@ -679,6 +1077,15 @@ main <- function() {
   }
   if (!opt$format %in% c("csv", "json")) {
     stop("--format must be csv or json")
+  }
+  if (!opt$auction_type %in% c("any", "judicial", "extrajudicial")) {
+    stop("--auction-type must be one of: any, judicial, extrajudicial")
+  }
+  if (!opt$current_round %in% c("any", "1", "2", "ended")) {
+    stop("--current-round must be one of: any, 1, 2, ended")
+  }
+  if (!opt$date_field %in% c("next", "first", "second", "any")) {
+    stop("--date-field must be one of: next, first, second, any")
   }
 
   site <- normalize_site(opt$site)
@@ -695,12 +1102,16 @@ main <- function() {
 
   log_msg("Site detectado: ", site, verbose = opt$verbose)
   log_msg("URL: ", opt$url, verbose = opt$verbose)
-  log_msg("Max pages: ", opt$max_pages, verbose = opt$verbose)
+  log_msg("Max pages: ", max_pages_label(opt$max_pages), verbose = opt$verbose)
+  log_msg("Filtro auction_type: ", opt$auction_type, "; current_round: ", opt$current_round, verbose = opt$verbose)
+  log_msg("Filtro data: field=", opt$date_field, "; from=", opt$date_from %||% "", "; to=", opt$date_to %||% "", verbose = opt$verbose)
+
+  scrape_url <- apply_site_native_filters(opt$url, site = site, opt = opt, verbose = opt$verbose)
 
   res <- switch(
     site,
     "zuk" = scrape_zuk(
-      url = opt$url,
+      url = scrape_url,
       max_pages = opt$max_pages,
       sleep_sec = opt$sleep,
       user_agent = user_agent,
@@ -708,7 +1119,7 @@ main <- function() {
       verbose = opt$verbose
     ),
     "megaleiloes" = scrape_megaleiloes(
-      url = opt$url,
+      url = scrape_url,
       max_pages = opt$max_pages,
       sleep_sec = opt$sleep,
       user_agent = user_agent,
@@ -716,7 +1127,9 @@ main <- function() {
       verbose = opt$verbose
     ),
     "leeilon" = scrape_leeilon(
-      url = opt$url,
+      url = scrape_url,
+      max_pages = opt$max_pages,
+      sleep_sec = opt$sleep,
       user_agent = user_agent,
       timeout_sec = timeout_sec,
       verbose = opt$verbose
@@ -725,6 +1138,7 @@ main <- function() {
   )
 
   res <- dedupe_results(res)
+  res <- apply_report_filters(res, opt = opt, verbose = opt$verbose)
   res <- res[order(res$site, res$listing_id, res$listing_url), , drop = FALSE]
 
   if (is.null(opt$out) || !nzchar(opt$out)) {

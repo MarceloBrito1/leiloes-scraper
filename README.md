@@ -3,9 +3,24 @@
 Projeto separado para raspagem de oportunidades de leiloes imobiliarios.
 
 ## O que faz
-- Suporta `portalzuk.com.br` com paginação por `carregar mais`.
-- Suporta `megaleiloes.com.br` com paginação por `?pagina=`.
-- Mantem fallback para `leeilon.com.br` (somente conteudo estatico).
+- Suporta `portalzuk.com.br` com paginacao por `carregar mais`.
+- Suporta `megaleiloes.com.br` com paginacao por `?pagina=`.
+- Suporta `leeilon.com.br` via endpoint dinamico oficial (server action), com paginacao por `page`.
+- Percorre todas as paginas por padrao (`--max-pages all`).
+
+## Filtros de relatorio
+Permite filtrar por:
+- modalidade (`--auction-type any|judicial|extrajudicial`)
+- fase atual (`--current-round any|1|2|ended`)
+- janela de datas (`--date-from`, `--date-to`)
+- campo de data (`--date-field next|first|second|any`)
+
+## Filtros nativos dos sites
+- MegaLeiloes: quando `--auction-type` e informado, o scraper usa rota nativa:
+  - judicial -> `https://www.megaleiloes.com.br/leiloes-judiciais`
+  - extrajudicial -> `https://www.megaleiloes.com.br/leiloes-extrajudiciais`
+- Zuk: o scraper tenta aplicar `comitente_judicial` na URL e reforca o filtro no pos-processamento.
+- Leeilon: quando `--auction-type` e informado, o scraper aplica `modalidades=Judicial|Extrajudicial`.
 
 ## Requisitos
 - R (>= 4.2)
@@ -13,14 +28,52 @@ Projeto separado para raspagem de oportunidades de leiloes imobiliarios.
 
 ## Uso direto
 ```bash
-Rscript scripts/scrape_leiloes.R --url "https://www.portalzuk.com.br/leilao-de-imoveis" --site zuk --max-pages 5 --out "resultado.csv"
+Rscript scripts/scrape_leiloes.R --url "https://www.portalzuk.com.br/leilao-de-imoveis" --site zuk --out "resultado.csv"
+```
+
+Por padrao, o scraper percorre todas as paginas disponiveis.
+Use `--max-pages N` apenas se quiser limitar.
+
+### Exemplo com filtros
+```bash
+Rscript scripts/scrape_leiloes.R \
+  --url "https://www.megaleiloes.com.br/imoveis?pagina=1" \
+  --site megaleiloes \
+  --auction-type judicial \
+  --current-round 2 \
+  --date-from 2026-03-01 \
+  --date-to 2026-03-31 \
+  --date-field next \
+  --out "relatorio_filtrado.csv"
+```
+
+### Exemplo Leeilon
+```bash
+Rscript scripts/scrape_leiloes.R \
+  --url "https://www.leeilon.com.br/busca-leilao?estado=S%C3%A3o+Paulo&categorias=Apartamento,Casa&modalidades=Judicial&page=1" \
+  --site leeilon \
+  --max-pages all \
+  --out "leeilon.csv"
 ```
 
 ## Execucao com historico local
 Use o wrapper PowerShell para salvar cada execucao em uma pasta com timestamp:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run_and_archive.ps1 -Url "https://www.megaleiloes.com.br/imoveis?pagina=1" -Site megaleiloes -MaxPages 3
+powershell -ExecutionPolicy Bypass -File .\scripts\run_and_archive.ps1 -Url "https://www.megaleiloes.com.br/imoveis?pagina=1" -Site megaleiloes
+```
+
+Com filtros:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_and_archive.ps1 `
+  -Url "https://www.megaleiloes.com.br/imoveis?pagina=1" `
+  -Site megaleiloes `
+  -AuctionType judicial `
+  -CurrentRound 2 `
+  -DateFrom 2026-03-01 `
+  -DateTo 2026-03-31 `
+  -DateField next
 ```
 
 Isso cria:

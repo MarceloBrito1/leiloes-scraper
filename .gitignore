@@ -4,3 +4,8 @@
 
 local_progress/*
 !local_progress/.gitkeep
+
+# debug / reverse-engineering artifacts
+leeilon_chunks/
+live_leeilon.html
+smoke_*.csv
