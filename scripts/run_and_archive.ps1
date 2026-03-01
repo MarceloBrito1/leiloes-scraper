@@ -23,7 +23,11 @@ param(
   [ValidateSet('csv','json')]
   [string]$Format = 'csv',
 
-  [string]$BaseDir = ''
+  [string]$BaseDir = '',
+
+  [string]$LoginUser = '',
+  [string]$LoginPass = '',
+  [switch]$NoLoginPrompt
 )
 
 $ErrorActionPreference = 'Stop'
@@ -47,6 +51,37 @@ $metaFile = Join-Path $runDir 'params.json'
 
 $startedAt = (Get-Date).ToString('o')
 
+function ConvertTo-PlainText([System.Security.SecureString]$secure) {
+  if ($null -eq $secure) { return '' }
+  $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+  try {
+    return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+  } finally {
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+  }
+}
+
+$resolvedLoginUser = $LoginUser
+$resolvedLoginPass = $LoginPass
+
+if (-not $NoLoginPrompt) {
+  if ([string]::IsNullOrWhiteSpace($resolvedLoginUser)) {
+    $resolvedLoginUser = Read-Host 'Usuario para login nos sites (Enter para seguir sem login)'
+  }
+  if (-not [string]::IsNullOrWhiteSpace($resolvedLoginUser) -and [string]::IsNullOrWhiteSpace($resolvedLoginPass)) {
+    $securePwd = Read-Host 'Senha (entrada oculta)' -AsSecureString
+    $resolvedLoginPass = ConvertTo-PlainText $securePwd
+  }
+}
+
+if ([string]::IsNullOrWhiteSpace($resolvedLoginUser) -xor [string]::IsNullOrWhiteSpace($resolvedLoginPass)) {
+  Write-Warning 'Usuario/senha incompletos; execucao continuara sem login.'
+  $resolvedLoginUser = ''
+  $resolvedLoginPass = ''
+}
+
+$loginEnabled = (-not [string]::IsNullOrWhiteSpace($resolvedLoginUser)) -and (-not [string]::IsNullOrWhiteSpace($resolvedLoginPass))
+
 $args = @(
   $scriptPath,
   '--url', $Url,
@@ -66,9 +101,29 @@ if (-not [string]::IsNullOrWhiteSpace($DateTo)) { $args += @('--date-to', $DateT
 
 "[START] $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz')" | Tee-Object -FilePath $logFile -Append | Out-Null
 "Comando: Rscript $($args -join ' ')" | Tee-Object -FilePath $logFile -Append | Out-Null
+"Login habilitado: $loginEnabled" | Tee-Object -FilePath $logFile -Append | Out-Null
 
-& Rscript @args 2>&1 | Tee-Object -FilePath $logFile -Append
-$exitCode = $LASTEXITCODE
+$hadPrevUser = Test-Path Env:LEILOES_LOGIN_USER
+$hadPrevPass = Test-Path Env:LEILOES_LOGIN_PASS
+$prevUser = if ($hadPrevUser) { $env:LEILOES_LOGIN_USER } else { '' }
+$prevPass = if ($hadPrevPass) { $env:LEILOES_LOGIN_PASS } else { '' }
+
+try {
+  if ($loginEnabled) {
+    $env:LEILOES_LOGIN_USER = $resolvedLoginUser
+    $env:LEILOES_LOGIN_PASS = $resolvedLoginPass
+  } else {
+    Remove-Item Env:LEILOES_LOGIN_USER -ErrorAction SilentlyContinue
+    Remove-Item Env:LEILOES_LOGIN_PASS -ErrorAction SilentlyContinue
+  }
+
+  & Rscript @args 2>&1 | Tee-Object -FilePath $logFile -Append
+  $exitCode = $LASTEXITCODE
+}
+finally {
+  if ($hadPrevUser) { $env:LEILOES_LOGIN_USER = $prevUser } else { Remove-Item Env:LEILOES_LOGIN_USER -ErrorAction SilentlyContinue }
+  if ($hadPrevPass) { $env:LEILOES_LOGIN_PASS = $prevPass } else { Remove-Item Env:LEILOES_LOGIN_PASS -ErrorAction SilentlyContinue }
+}
 
 $endedAt = (Get-Date).ToString('o')
 
@@ -86,6 +141,8 @@ $meta = [ordered]@{
   date_to = $DateTo
   date_field = $DateField
   format = $Format
+  login_enabled = $loginEnabled
+  login_prompt_disabled = [bool]$NoLoginPrompt
   output_file = $outFile
   log_file = $logFile
 }

@@ -151,7 +151,7 @@ log_msg <- function(..., verbose = TRUE) {
   }
 }
 
-fetch_html <- function(url, user_agent, timeout_sec = 60, headers = list(), verbose = FALSE) {
+fetch_html <- function(url, user_agent, timeout_sec = 60, headers = list(), handle = NULL, verbose = FALSE) {
   log_msg("GET ", url, verbose = verbose)
   h <- unlist(headers, use.names = TRUE)
   h <- h[!is.na(h) & nzchar(h)]
@@ -164,6 +164,9 @@ fetch_html <- function(url, user_agent, timeout_sec = 60, headers = list(), verb
   if (length(h) > 0) {
     args <- c(args, list(httr::add_headers(.headers = h)))
   }
+  if (!is.null(handle)) {
+    args <- c(args, list(handle = handle))
+  }
   req <- do.call(httr::GET, args)
   httr::stop_for_status(req)
   txt <- httr::content(req, as = "text", encoding = "UTF-8")
@@ -171,7 +174,7 @@ fetch_html <- function(url, user_agent, timeout_sec = 60, headers = list(), verb
   list(resp = req, text = txt, doc = doc)
 }
 
-post_form <- function(url, form, user_agent, timeout_sec = 60, headers = list(), verbose = FALSE) {
+post_form <- function(url, form, user_agent, timeout_sec = 60, headers = list(), handle = NULL, verbose = FALSE) {
   log_msg("POST ", url, verbose = verbose)
   h <- unlist(headers, use.names = TRUE)
   h <- h[!is.na(h) & nzchar(h)]
@@ -185,10 +188,14 @@ post_form <- function(url, form, user_agent, timeout_sec = 60, headers = list(),
   if (length(h) > 0) {
     args <- c(args, list(httr::add_headers(.headers = h)))
   }
+  if (!is.null(handle)) {
+    args <- c(args, list(handle = handle))
+  }
   req <- do.call(httr::POST, args)
   httr::stop_for_status(req)
   txt <- httr::content(req, as = "text", encoding = "UTF-8")
-  list(resp = req, text = txt)
+  doc <- xml2::read_html(txt, options = c("RECOVER", "NOERROR", "NOWARNING"))
+  list(resp = req, text = txt, doc = doc)
 }
 
 normalize_site <- function(site) {
@@ -276,6 +283,300 @@ canonical_search_url <- function(url, site) {
   }
 
   u
+}
+
+ascii_fold_lower <- function(x) {
+  if (length(x) == 0 || is.na(x)) return("")
+  y <- suppressWarnings(iconv(as.character(x), from = "", to = "ASCII//TRANSLIT"))
+  if (is.na(y)) y <- as.character(x)
+  tolower(y)
+}
+
+sanitize_credential <- function(x) {
+  y <- normalize_ws(x)
+  if (is.na(y) || !nzchar(y)) NA_character_ else y
+}
+
+sanitize_password <- function(x) {
+  if (is.null(x) || length(x) == 0) return(NA_character_)
+  y <- as.character(x[[1]])
+  if (is.na(y) || !nzchar(y)) NA_character_ else y
+}
+
+site_origin <- function(url) {
+  p <- httr::parse_url(url)
+  if (is.null(p$scheme) || is.null(p$hostname)) return(NA_character_)
+  out <- paste0(p$scheme, "://", p$hostname)
+  if (!is.null(p$port)) out <- paste0(out, ":", p$port)
+  out
+}
+
+site_login_candidates <- function(site, url) {
+  generic <- c(
+    url,
+    make_absolute_url(url, "/login"),
+    make_absolute_url(url, "/entrar"),
+    make_absolute_url(url, "/acesso"),
+    make_absolute_url(url, "/minha-conta"),
+    make_absolute_url(url, "/minha-conta/login")
+  )
+
+  site_specific <- switch(
+    site,
+    "zuk" = c(
+      make_absolute_url(url, "/entrar"),
+      make_absolute_url(url, "/login"),
+      make_absolute_url(url, "/minha-conta/login")
+    ),
+    "megaleiloes" = c(
+      make_absolute_url(url, "/login"),
+      make_absolute_url(url, "/entrar"),
+      make_absolute_url(url, "/acesso")
+    ),
+    "leeilon" = c(
+      make_absolute_url(url, "/login"),
+      make_absolute_url(url, "/entrar"),
+      make_absolute_url(url, "/acesso")
+    ),
+    character(0)
+  )
+
+  out <- unique(c(site_specific, generic))
+  out[!is.na(out) & grepl("^https?://", out, ignore.case = TRUE)]
+}
+
+find_login_form <- function(doc) {
+  forms <- xml2::xml_find_all(
+    doc,
+    ".//form[.//input[contains(translate(@type,'PASSWORD','password'),'password') or contains(translate(@name,'SENHAPASSWORD','senhapassword'),'senha') or contains(translate(@name,'SENHAPASSWORD','senhapassword'),'password')]]"
+  )
+  if (length(forms) == 0) return(NULL)
+  forms[[1]]
+}
+
+extract_form_defaults <- function(form_node) {
+  inputs <- xml2::xml_find_all(form_node, ".//input[@name]")
+  if (length(inputs) == 0) return(list())
+  out <- list()
+  for (i in seq_along(inputs)) {
+    input <- inputs[[i]]
+    if (!is.na(xml2::xml_attr(input, "disabled"))) next
+    name <- normalize_ws(xml2::xml_attr(input, "name"))
+    if (is.na(name)) next
+    value <- xml2::xml_attr(input, "value")
+    if (is.na(value)) value <- ""
+    out[[name]] <- as.character(value)
+  }
+  out
+}
+
+guess_login_fields <- function(form_node) {
+  inputs <- xml2::xml_find_all(form_node, ".//input[@name]")
+  if (length(inputs) == 0) return(list(user = NA_character_, pass = NA_character_))
+
+  nms <- vapply(inputs, function(node) normalize_ws(xml2::xml_attr(node, "name")), character(1))
+  typ <- vapply(inputs, function(node) {
+    raw <- normalize_ws(xml2::xml_attr(node, "type"))
+    if (is.na(raw)) "text" else tolower(raw)
+  }, character(1))
+  fold <- vapply(nms, ascii_fold_lower, character(1))
+
+  idx_pass <- which(typ == "password" | grepl("senha|password|pass", fold))
+  idx_text <- which(typ %in% c("text", "email", "tel", "number", "search", ""))
+  idx_user_pref <- which(grepl("email|usuario|user|login|cpf|cnpj|document", fold))
+  idx_user <- setdiff(idx_user_pref, idx_pass)
+  if (length(idx_user) == 0) idx_user <- setdiff(idx_text, idx_pass)
+  if (length(idx_user) == 0) idx_user <- setdiff(seq_along(nms), idx_pass)
+
+  user <- nms[idx_user[1] %||% NA_integer_] %||% NA_character_
+  pass <- nms[idx_pass[1] %||% NA_integer_] %||% NA_character_
+
+  list(user = user, pass = pass)
+}
+
+form_action_url <- function(page_url, form_node) {
+  action <- normalize_ws(xml2::xml_attr(form_node, "action"))
+  if (is.na(action)) return(page_url)
+  make_absolute_url(page_url, action)
+}
+
+form_method <- function(form_node) {
+  m <- tolower(normalize_ws(xml2::xml_attr(form_node, "method")) %||% "post")
+  if (!m %in% c("get", "post")) "post" else m
+}
+
+submit_form <- function(action_url, method, payload, referer_url, user_agent, timeout_sec, handle = NULL, verbose = FALSE) {
+  headers <- list(Referer = referer_url)
+  origin <- site_origin(referer_url)
+  if (!is.na(origin)) headers$Origin <- origin
+
+  if (method == "get") {
+    p <- httr::parse_url(action_url)
+    q <- p$query %||% list()
+    for (k in names(payload)) q[[k]] <- as.character(payload[[k]])
+    p$query <- q
+    target <- httr::build_url(p)
+    return(fetch_html(
+      target,
+      user_agent = user_agent,
+      timeout_sec = timeout_sec,
+      headers = headers,
+      handle = handle,
+      verbose = verbose
+    ))
+  }
+
+  post_form(
+    action_url,
+    form = payload,
+    user_agent = user_agent,
+    timeout_sec = timeout_sec,
+    headers = headers,
+    handle = handle,
+    verbose = verbose
+  )
+}
+
+is_login_success <- function(doc, text) {
+  txt <- ascii_fold_lower(text %||% "")
+  err_pat <- paste(
+    c(
+      "senha\\s+incorret",
+      "usuario\\s+incorret",
+      "credenciais?\\s+invalid",
+      "login\\s+invalid",
+      "nao\\s+foi\\s+possivel\\s+entrar",
+      "captcha",
+      "recaptcha"
+    ),
+    collapse = "|"
+  )
+  if (grepl(err_pat, txt)) return(FALSE)
+
+  ok_pat <- paste(
+    c(
+      "logout",
+      "\\bsair\\b",
+      "minha\\s+conta",
+      "meus\\s+lances",
+      "painel",
+      "area\\s+do\\s+cliente"
+    ),
+    collapse = "|"
+  )
+  if (grepl(ok_pat, txt)) return(TRUE)
+
+  is.null(find_login_form(doc))
+}
+
+attempt_login_on_page <- function(login_url, username, password, user_agent, timeout_sec, handle, verbose = FALSE) {
+  page <- tryCatch(
+    fetch_html(
+      login_url,
+      user_agent = user_agent,
+      timeout_sec = timeout_sec,
+      handle = handle,
+      verbose = verbose
+    ),
+    error = function(e) {
+      log_msg("Falha ao abrir pagina de login ", login_url, ": ", conditionMessage(e), verbose = verbose)
+      NULL
+    }
+  )
+  if (is.null(page)) return(list(found_form = FALSE, success = FALSE, reason = "open_failed"))
+
+  form <- find_login_form(page$doc)
+  if (is.null(form)) {
+    return(list(found_form = FALSE, success = FALSE, reason = "form_not_found"))
+  }
+
+  fields <- guess_login_fields(form)
+  if (is.na(fields$user) || is.na(fields$pass)) {
+    return(list(found_form = TRUE, success = FALSE, reason = "fields_not_found"))
+  }
+
+  payload <- extract_form_defaults(form)
+  payload[[fields$user]] <- username
+  payload[[fields$pass]] <- password
+
+  action_url <- form_action_url(login_url, form)
+  method <- form_method(form)
+
+  submitted <- tryCatch(
+    submit_form(
+      action_url = action_url,
+      method = method,
+      payload = payload,
+      referer_url = login_url,
+      user_agent = user_agent,
+      timeout_sec = timeout_sec,
+      handle = handle,
+      verbose = verbose
+    ),
+    error = function(e) {
+      log_msg("Falha no submit de login ", action_url, ": ", conditionMessage(e), verbose = verbose)
+      NULL
+    }
+  )
+  if (is.null(submitted)) return(list(found_form = TRUE, success = FALSE, reason = "submit_failed"))
+
+  ok <- is_login_success(submitted$doc, submitted$text)
+  list(found_form = TRUE, success = ok, reason = if (ok) "login_success" else "login_not_confirmed")
+}
+
+resolve_site_credentials <- function(site) {
+  key <- toupper(gsub("[^A-Za-z0-9]", "_", site))
+  user <- sanitize_credential(Sys.getenv(paste0("LEILOES_", key, "_USER"), unset = ""))
+  pass <- sanitize_password(Sys.getenv(paste0("LEILOES_", key, "_PASS"), unset = ""))
+
+  if (is.na(pass)) pass <- sanitize_password(Sys.getenv(paste0("LEILOES_", key, "_PASSWORD"), unset = ""))
+  if (is.na(user)) user <- sanitize_credential(Sys.getenv("LEILOES_LOGIN_USER", unset = ""))
+  if (is.na(pass)) pass <- sanitize_password(Sys.getenv("LEILOES_LOGIN_PASS", unset = ""))
+  if (is.na(pass)) pass <- sanitize_password(Sys.getenv("LEILOES_LOGIN_PASSWORD", unset = ""))
+
+  list(user = user, pass = pass)
+}
+
+start_site_session <- function(site, url, user_agent, timeout_sec, verbose = FALSE) {
+  origin <- site_origin(url)
+  if (is.na(origin)) stop("Could not infer site origin for session handle.")
+  handle <- httr::handle(origin)
+
+  creds <- resolve_site_credentials(site)
+  if (is.na(creds$user) || is.na(creds$pass)) {
+    log_msg("Login: credenciais nao informadas; executando sem autenticacao.", verbose = verbose)
+    return(list(handle = handle, attempted = FALSE, authenticated = FALSE, reason = "no_credentials"))
+  }
+
+  log_msg("Login: tentando autenticar em ", site, " ...", verbose = verbose)
+  candidates <- site_login_candidates(site, url)
+  found_form <- FALSE
+
+  for (login_url in candidates) {
+    log_msg("Login: avaliando ", login_url, verbose = verbose)
+    attempt <- attempt_login_on_page(
+      login_url = login_url,
+      username = creds$user,
+      password = creds$pass,
+      user_agent = user_agent,
+      timeout_sec = timeout_sec,
+      handle = handle,
+      verbose = verbose
+    )
+    if (isTRUE(attempt$found_form)) found_form <- TRUE
+    if (isTRUE(attempt$success)) {
+      log_msg("Login: autenticacao confirmada em ", login_url, verbose = verbose)
+      return(list(handle = handle, attempted = TRUE, authenticated = TRUE, reason = "ok", login_url = login_url))
+    }
+  }
+
+  if (found_form) {
+    log_msg("Login: formulario encontrado, mas autenticacao nao foi confirmada.", verbose = verbose)
+    return(list(handle = handle, attempted = TRUE, authenticated = FALSE, reason = "not_confirmed"))
+  }
+
+  log_msg("Login: nenhum formulario de login detectado; continuando sem autenticacao.", verbose = verbose)
+  list(handle = handle, attempted = TRUE, authenticated = FALSE, reason = "form_not_found")
 }
 
 normalize_auction_type <- function(x) {
@@ -573,9 +874,9 @@ extract_zuk_total <- function(html_text) {
   if (length(v) == 0) NA_integer_ else max(v)
 }
 
-scrape_zuk <- function(url, max_pages = NA_integer_, sleep_sec = 0.75, user_agent, timeout_sec, verbose = FALSE) {
+scrape_zuk <- function(url, max_pages = NA_integer_, sleep_sec = 0.75, user_agent, timeout_sec, handle = NULL, verbose = FALSE) {
   page_limit <- if (is.na(max_pages)) Inf else as.numeric(max_pages)
-  first <- fetch_html(url, user_agent = user_agent, timeout_sec = timeout_sec, verbose = verbose)
+  first <- fetch_html(url, user_agent = user_agent, timeout_sec = timeout_sec, handle = handle, verbose = verbose)
   all_rows <- extract_zuk_cards(first$doc, source_url = url)
 
   token <- extract_zuk_token(first$doc)
@@ -613,6 +914,7 @@ scrape_zuk <- function(url, max_pages = NA_integer_, sleep_sec = 0.75, user_agen
         Origin = "https://www.portalzuk.com.br",
         `X-Requested-With` = "XMLHttpRequest"
       ),
+      handle = handle,
       verbose = verbose
     )
 
@@ -732,7 +1034,7 @@ extract_mega_last_page <- function(doc, fallback = 1L) {
   as.integer(fallback)
 }
 
-scrape_megaleiloes <- function(url, max_pages = NA_integer_, sleep_sec = 0.75, user_agent, timeout_sec, verbose = FALSE) {
+scrape_megaleiloes <- function(url, max_pages = NA_integer_, sleep_sec = 0.75, user_agent, timeout_sec, handle = NULL, verbose = FALSE) {
   page_limit <- if (is.na(max_pages)) Inf else as.numeric(max_pages)
   start_page <- suppressWarnings(as.integer(parse_query_value(url, "pagina")))
   if (is.na(start_page) || start_page < 1L) start_page <- 1L
@@ -745,7 +1047,7 @@ scrape_megaleiloes <- function(url, max_pages = NA_integer_, sleep_sec = 0.75, u
   repeat {
     if (pages_done >= page_limit) break
     page_url <- set_query_value(url, "pagina", page)
-    fetched <- fetch_html(page_url, user_agent = user_agent, timeout_sec = timeout_sec, verbose = verbose)
+    fetched <- fetch_html(page_url, user_agent = user_agent, timeout_sec = timeout_sec, handle = handle, verbose = verbose)
     pages_done <- pages_done + 1L
 
     if (is.na(last_page)) {
@@ -887,7 +1189,7 @@ extract_leeilon_rows <- function(items, source_url) {
   dedupe_results(do.call(rbind, rows))
 }
 
-fetch_leeilon_action <- function(page_url, query, action_id, tree_header, user_agent, timeout_sec, verbose = FALSE) {
+fetch_leeilon_action <- function(page_url, query, action_id, tree_header, user_agent, timeout_sec, handle = NULL, verbose = FALSE) {
   body_obj <- lapply(query %||% list(), function(v) {
     txt <- normalize_ws(as.character(v))
     if (is.na(txt)) return(NA_character_)
@@ -908,6 +1210,7 @@ fetch_leeilon_action <- function(page_url, query, action_id, tree_header, user_a
       Referer = page_url,
       `Content-Type` = "text/plain;charset=UTF-8"
     ),
+    handle = handle,
     body = body_json,
     encode = "raw"
   )
@@ -924,7 +1227,7 @@ fetch_leeilon_action <- function(page_url, query, action_id, tree_header, user_a
   payload
 }
 
-scrape_leeilon <- function(url, max_pages = NA_integer_, sleep_sec = 0.75, user_agent, timeout_sec, verbose = FALSE) {
+scrape_leeilon <- function(url, max_pages = NA_integer_, sleep_sec = 0.75, user_agent, timeout_sec, handle = NULL, verbose = FALSE) {
   page_limit <- if (is.na(max_pages)) Inf else as.numeric(max_pages)
   start_page <- suppressWarnings(as.integer(parse_query_value(url, "page")))
   if (is.na(start_page) || start_page < 1L) start_page <- 1L
@@ -949,6 +1252,7 @@ scrape_leeilon <- function(url, max_pages = NA_integer_, sleep_sec = 0.75, user_
       tree_header = tree_header,
       user_agent = user_agent,
       timeout_sec = timeout_sec,
+      handle = handle,
       verbose = verbose
     )
     pages_done <- pages_done + 1L
@@ -1014,6 +1318,9 @@ usage <- function() {
     "  --verbose                                Logs detalhados (padrao: ligado)\n",
     "  --quiet                                  Sem logs\n",
     "  --help                                   Mostra esta ajuda\n\n",
+    "Autenticacao (variaveis de ambiente):\n",
+    "  LEILOES_LOGIN_USER / LEILOES_LOGIN_PASS\n",
+    "  LEILOES_<SITE>_USER / LEILOES_<SITE>_PASS (ex.: LEILOES_ZUK_USER)\n\n",
     "Exemplos:\n",
     "  Rscript scripts/scrape_leiloes.R --url \"https://www.portalzuk.com.br/leilao-de-imoveis\"\n",
     "  Rscript scripts/scrape_leiloes.R --url \"https://www.megaleiloes.com.br/imoveis?pagina=1\" --site megaleiloes\n",
@@ -1173,6 +1480,13 @@ main <- function() {
   log_msg("Filtro data: field=", opt$date_field, "; from=", opt$date_from %||% "", "; to=", opt$date_to %||% "", verbose = opt$verbose)
 
   scrape_url <- apply_site_native_filters(opt$url, site = site, opt = opt, verbose = opt$verbose)
+  session <- start_site_session(
+    site = site,
+    url = scrape_url,
+    user_agent = user_agent,
+    timeout_sec = timeout_sec,
+    verbose = opt$verbose
+  )
 
   res <- switch(
     site,
@@ -1182,6 +1496,7 @@ main <- function() {
       sleep_sec = opt$sleep,
       user_agent = user_agent,
       timeout_sec = timeout_sec,
+      handle = session$handle,
       verbose = opt$verbose
     ),
     "megaleiloes" = scrape_megaleiloes(
@@ -1190,6 +1505,7 @@ main <- function() {
       sleep_sec = opt$sleep,
       user_agent = user_agent,
       timeout_sec = timeout_sec,
+      handle = session$handle,
       verbose = opt$verbose
     ),
     "leeilon" = scrape_leeilon(
@@ -1198,6 +1514,7 @@ main <- function() {
       sleep_sec = opt$sleep,
       user_agent = user_agent,
       timeout_sec = timeout_sec,
+      handle = session$handle,
       verbose = opt$verbose
     ),
     stop("Unhandled site: ", site)

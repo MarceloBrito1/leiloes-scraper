@@ -35,6 +35,22 @@ Rscript scripts/scrape_leiloes.R --url "https://www.portalzuk.com.br/leilao-de-i
 Por padrao, o scraper percorre todas as paginas disponiveis.
 Use `--max-pages N` apenas se quiser limitar.
 
+### Login por usuario/senha
+O scraper suporta sessao autenticada por cookies para Zuk, MegaLeiloes e Leeilon.
+
+No uso direto, informe credenciais por variaveis de ambiente:
+
+```powershell
+$env:LEILOES_LOGIN_USER="seu_usuario"
+$env:LEILOES_LOGIN_PASS="sua_senha"
+Rscript scripts/scrape_leiloes.R --url "https://www.leeilon.com.br/busca-leilao?page=1" --site leeilon --out "leeilon.csv"
+```
+
+Opcionalmente, voce pode usar variaveis por site:
+- `LEILOES_ZUK_USER` / `LEILOES_ZUK_PASS`
+- `LEILOES_MEGALEILOES_USER` / `LEILOES_MEGALEILOES_PASS`
+- `LEILOES_LEEILON_USER` / `LEILOES_LEEILON_PASS`
+
 ### Exemplo com filtros
 ```bash
 Rscript scripts/scrape_leiloes.R \
@@ -62,6 +78,14 @@ Use o wrapper PowerShell para salvar cada execucao em uma pasta com timestamp:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\run_and_archive.ps1 -Url "https://www.megaleiloes.com.br/imoveis?pagina=1" -Site megaleiloes
+```
+
+O wrapper pergunta usuario/senha antes de iniciar (senha oculta) e injeta as credenciais na execucao sem gravar a senha no comando/log.
+
+Para execucao sem prompt de login:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_and_archive.ps1 -Url "https://www.megaleiloes.com.br/imoveis?pagina=1" -Site megaleiloes -NoLoginPrompt
 ```
 
 Com filtros:
