@@ -8,6 +8,7 @@ Projeto separado para raspagem de oportunidades de leiloes imobiliarios.
 - Suporta `leeilon.com.br` via endpoint dinamico oficial (server action), com paginacao por `page`.
 - Percorre todas as paginas por padrao (`--max-pages all`).
 - Faz sanitizacao automatica da URL de entrada (remove wrappers/redirecionadores e entra direto na rota de busca), reduzindo impacto de popups/anuncios de entrada.
+- Possui retentativa automatica com backoff para respostas `HTTP 429`/`5xx`, reduzindo falhas por bloqueio de taxa.
 
 ## Filtros de relatorio
 Permite filtrar por:

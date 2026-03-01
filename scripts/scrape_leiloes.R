@@ -151,7 +151,107 @@ log_msg <- function(..., verbose = TRUE) {
   }
 }
 
-fetch_html <- function(url, user_agent, timeout_sec = 60, headers = list(), handle = NULL, verbose = FALSE) {
+is_retryable_http_status <- function(status_code) {
+  status_code %in% c(408L, 425L, 429L) || (status_code >= 500L && status_code <= 599L)
+}
+
+extract_retry_after_seconds <- function(resp) {
+  h <- httr::headers(resp)
+  if (length(h) == 0) return(NA_real_)
+  idx <- which(tolower(names(h)) == "retry-after")[1]
+  if (is.na(idx)) return(NA_real_)
+  raw <- normalize_ws(as.character(h[[idx]]))
+  if (is.na(raw)) return(NA_real_)
+
+  as_num <- suppressWarnings(as.numeric(raw))
+  if (!is.na(as_num)) return(max(0, as_num))
+
+  as_dt <- suppressWarnings(as.POSIXct(raw, tz = "GMT"))
+  if (is.na(as_dt)) return(NA_real_)
+  max(0, as.numeric(difftime(as_dt, Sys.time(), units = "secs")))
+}
+
+compute_retry_wait <- function(attempt, resp = NULL, retry_base_sec = 2, retry_max_sec = 90) {
+  expo <- min(retry_max_sec, retry_base_sec * (2^(attempt - 1L)))
+  jitter <- stats::runif(1, min = 0, max = retry_base_sec)
+  wait <- expo + jitter
+  if (!is.null(resp)) {
+    retry_after <- extract_retry_after_seconds(resp)
+    if (!is.na(retry_after)) {
+      wait <- max(wait, retry_after)
+    }
+  }
+  wait
+}
+
+request_with_retry <- function(request_fn, request_label, max_retries = 6L, retry_base_sec = 2, retry_max_sec = 90, verbose = FALSE) {
+  max_attempts <- as.integer(max_retries) + 1L
+  if (is.na(max_attempts) || max_attempts < 1L) max_attempts <- 1L
+
+  attempt <- 1L
+  repeat {
+    req_or_err <- tryCatch(
+      request_fn(),
+      error = function(e) e
+    )
+
+    if (inherits(req_or_err, "error")) {
+      if (attempt >= max_attempts) {
+        stop("Falha em ", request_label, " apos ", max_attempts, " tentativas: ", conditionMessage(req_or_err))
+      }
+      wait <- compute_retry_wait(
+        attempt = attempt,
+        resp = NULL,
+        retry_base_sec = retry_base_sec,
+        retry_max_sec = retry_max_sec
+      )
+      log_msg(
+        request_label, " falhou (tentativa ", attempt, "/", max_attempts, "): ",
+        conditionMessage(req_or_err), ". Aguardando ", sprintf("%.1f", wait), "s para tentar novamente.",
+        verbose = verbose
+      )
+      Sys.sleep(wait)
+      attempt <- attempt + 1L
+      next
+    }
+
+    req <- req_or_err
+    status <- httr::status_code(req)
+    if (status >= 200L && status < 300L) return(req)
+
+    if (is_retryable_http_status(status) && attempt < max_attempts) {
+      wait <- compute_retry_wait(
+        attempt = attempt,
+        resp = req,
+        retry_base_sec = retry_base_sec,
+        retry_max_sec = retry_max_sec
+      )
+      log_msg(
+        request_label, " recebeu HTTP ", status,
+        " (tentativa ", attempt, "/", max_attempts, "). Aguardando ",
+        sprintf("%.1f", wait), "s para tentar novamente.",
+        verbose = verbose
+      )
+      Sys.sleep(wait)
+      attempt <- attempt + 1L
+      next
+    }
+
+    httr::stop_for_status(req)
+  }
+}
+
+fetch_html <- function(
+  url,
+  user_agent,
+  timeout_sec = 60,
+  headers = list(),
+  handle = NULL,
+  max_retries = 6L,
+  retry_base_sec = 2,
+  retry_max_sec = 90,
+  verbose = FALSE
+) {
   log_msg("GET ", url, verbose = verbose)
   h <- unlist(headers, use.names = TRUE)
   h <- h[!is.na(h) & nzchar(h)]
@@ -167,14 +267,31 @@ fetch_html <- function(url, user_agent, timeout_sec = 60, headers = list(), hand
   if (!is.null(handle)) {
     args <- c(args, list(handle = handle))
   }
-  req <- do.call(httr::GET, args)
-  httr::stop_for_status(req)
+  req <- request_with_retry(
+    request_fn = function() do.call(httr::GET, args),
+    request_label = paste0("GET ", url),
+    max_retries = max_retries,
+    retry_base_sec = retry_base_sec,
+    retry_max_sec = retry_max_sec,
+    verbose = verbose
+  )
   txt <- httr::content(req, as = "text", encoding = "UTF-8")
   doc <- xml2::read_html(txt, options = c("RECOVER", "NOERROR", "NOWARNING"))
   list(resp = req, text = txt, doc = doc)
 }
 
-post_form <- function(url, form, user_agent, timeout_sec = 60, headers = list(), handle = NULL, verbose = FALSE) {
+post_form <- function(
+  url,
+  form,
+  user_agent,
+  timeout_sec = 60,
+  headers = list(),
+  handle = NULL,
+  max_retries = 6L,
+  retry_base_sec = 2,
+  retry_max_sec = 90,
+  verbose = FALSE
+) {
   log_msg("POST ", url, verbose = verbose)
   h <- unlist(headers, use.names = TRUE)
   h <- h[!is.na(h) & nzchar(h)]
@@ -191,8 +308,14 @@ post_form <- function(url, form, user_agent, timeout_sec = 60, headers = list(),
   if (!is.null(handle)) {
     args <- c(args, list(handle = handle))
   }
-  req <- do.call(httr::POST, args)
-  httr::stop_for_status(req)
+  req <- request_with_retry(
+    request_fn = function() do.call(httr::POST, args),
+    request_label = paste0("POST ", url),
+    max_retries = max_retries,
+    retry_base_sec = retry_base_sec,
+    retry_max_sec = retry_max_sec,
+    verbose = verbose
+  )
   txt <- httr::content(req, as = "text", encoding = "UTF-8")
   doc <- xml2::read_html(txt, options = c("RECOVER", "NOERROR", "NOWARNING"))
   list(resp = req, text = txt, doc = doc)
@@ -904,19 +1027,33 @@ scrape_zuk <- function(url, max_pages = NA_integer_, sleep_sec = 0.75, user_agen
       "_token" = token
     )
 
-    resp <- post_form(
-      endpoint,
-      form = form,
-      user_agent = user_agent,
-      timeout_sec = timeout_sec,
-      headers = list(
-        Referer = url,
-        Origin = "https://www.portalzuk.com.br",
-        `X-Requested-With` = "XMLHttpRequest"
+    resp <- tryCatch(
+      post_form(
+        endpoint,
+        form = form,
+        user_agent = user_agent,
+        timeout_sec = timeout_sec,
+        headers = list(
+          Referer = url,
+          Origin = "https://www.portalzuk.com.br",
+          `X-Requested-With` = "XMLHttpRequest"
+        ),
+        handle = handle,
+        max_retries = 8L,
+        retry_base_sec = max(2, sleep_sec * 2),
+        retry_max_sec = 180,
+        verbose = verbose
       ),
-      handle = handle,
-      verbose = verbose
+      error = function(e) {
+        log_msg(
+          "Zuk: falha ao carregar pagina ", page_idx, ": ", conditionMessage(e),
+          ". Encerrando com dados parciais.",
+          verbose = verbose
+        )
+        NULL
+      }
     )
+    if (is.null(resp)) break
 
     if (!grepl("card_lotes_div", resp$text, fixed = TRUE)) {
       log_msg("Zuk: sem novos cards no bloco de carregar mais.", verbose = verbose)
@@ -934,7 +1071,11 @@ scrape_zuk <- function(url, max_pages = NA_integer_, sleep_sec = 0.75, user_agen
     log_msg("Zuk: pagina ", page_idx, " -> +", added, " registros", verbose = verbose)
 
     if (added <= 0) break
-    if (sleep_sec > 0) Sys.sleep(sleep_sec)
+    adaptive_sleep <- max(0, sleep_sec + min(1.2, (page_idx - 1L) * 0.05))
+    if (adaptive_sleep > 0) {
+      log_msg("Zuk: pausa adaptativa ", sprintf("%.2f", adaptive_sleep), "s", verbose = verbose)
+      Sys.sleep(adaptive_sleep)
+    }
     page_idx <- page_idx + 1L
   }
 
