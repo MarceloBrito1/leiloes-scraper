@@ -1,0 +1,6 @@
+.Rhistory
+.RData
+.Rproj.user/
+
+local_progress/*
+!local_progress/.gitkeep
