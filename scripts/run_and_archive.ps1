@@ -20,7 +20,7 @@ param(
   [ValidateSet('next','first','second','any')]
   [string]$DateField = 'next',
 
-  [ValidateSet('csv','json')]
+  [ValidateSet('csv','json','xlsx')]
   [string]$Format = 'csv',
 
   [string]$BaseDir = '',

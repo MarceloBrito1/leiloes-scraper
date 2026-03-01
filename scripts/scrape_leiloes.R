@@ -4,9 +4,38 @@
   if (is.null(x) || length(x) == 0 || (length(x) == 1 && is.na(x))) y else x
 }
 
+repair_mojibake_once <- function(x) {
+  if (length(x) == 0) return(x)
+  out <- x
+  idx <- !is.na(out) & grepl("[ÃÂâ]", out)
+  if (!any(idx)) return(out)
+
+  cand <- suppressWarnings(iconv(out[idx], from = "UTF-8", to = "latin1"))
+  Encoding(cand) <- "UTF-8"
+  valid <- !is.na(suppressWarnings(iconv(cand, from = "UTF-8", to = "UTF-8", sub = NA)))
+  m_orig <- nchar(gsub("[^ÃÂâ]", "", out[idx]))
+  cand_safe <- ifelse(valid, cand, "")
+  m_cand <- nchar(gsub("[^ÃÂâ]", "", cand_safe))
+  use <- valid & m_cand < m_orig
+  out[idx][use] <- cand[use]
+  out
+}
+
+repair_mojibake <- function(x, max_passes = 2L) {
+  if (length(x) == 0) return(x)
+  out <- x
+  for (i in seq_len(max_passes)) {
+    nxt <- repair_mojibake_once(out)
+    if (identical(nxt, out)) break
+    out <- nxt
+  }
+  out
+}
+
 normalize_ws <- function(x) {
   if (length(x) == 0 || is.na(x)) return(NA_character_)
   y <- stringr::str_squish(trimws(as.character(x)))
+  y <- repair_mojibake(y)
   if (!nzchar(y)) NA_character_ else y
 }
 
@@ -1454,7 +1483,7 @@ usage <- function() {
     "  --date-from <YYYY-MM-DD>                 Inicio da janela de data\n",
     "  --date-to <YYYY-MM-DD>                   Fim da janela de data\n",
     "  --date-field <next|first|second|any>     Campo de data para filtro (padrao: next)\n",
-    "  --format <csv|json>                      Formato de saida (padrao: csv)\n",
+    "  --format <csv|json|xlsx>                 Formato de saida (padrao: csv)\n",
     "  --out <arquivo>                          Caminho do arquivo de saida\n",
     "  --verbose                                Logs detalhados (padrao: ligado)\n",
     "  --quiet                                  Sem logs\n",
@@ -1556,8 +1585,21 @@ write_output <- function(df, out_path, fmt) {
   dir.create(dirname(out_path), recursive = TRUE, showWarnings = FALSE)
   if (fmt == "json") {
     jsonlite::write_json(df, out_path, pretty = TRUE, auto_unbox = TRUE, na = "null")
+  } else if (fmt == "xlsx") {
+    if (!requireNamespace("writexl", quietly = TRUE)) {
+      stop("Missing package: writexl. Install with: install.packages('writexl')")
+    }
+    writexl::write_xlsx(list(resultado = df), path = out_path)
   } else {
-    utils::write.csv(df, out_path, row.names = FALSE, fileEncoding = "UTF-8")
+    # UTF-8 BOM improves accent rendering when opening CSV directly in Excel.
+    tmp <- tempfile(fileext = ".csv")
+    on.exit(unlink(tmp), add = TRUE)
+    utils::write.csv(df, tmp, row.names = FALSE, fileEncoding = "UTF-8")
+    raw_csv <- readBin(tmp, what = "raw", n = file.info(tmp)$size)
+    con <- file(out_path, open = "wb")
+    on.exit(close(con), add = TRUE)
+    writeBin(as.raw(c(0xEF, 0xBB, 0xBF)), con)
+    writeBin(raw_csv, con)
   }
 }
 
@@ -1587,8 +1629,8 @@ main <- function() {
   if (is.na(opt$sleep) || opt$sleep < 0) {
     stop("--sleep must be >= 0")
   }
-  if (!opt$format %in% c("csv", "json")) {
-    stop("--format must be csv or json")
+  if (!opt$format %in% c("csv", "json", "xlsx")) {
+    stop("--format must be csv, json or xlsx")
   }
   if (!opt$auction_type %in% c("any", "judicial", "extrajudicial")) {
     stop("--auction-type must be one of: any, judicial, extrajudicial")
@@ -1667,7 +1709,7 @@ main <- function() {
 
   if (is.null(opt$out) || !nzchar(opt$out)) {
     ts <- format(Sys.time(), "%Y%m%d_%H%M%S")
-    ext <- ifelse(opt$format == "json", "json", "csv")
+    ext <- ifelse(opt$format == "json", "json", ifelse(opt$format == "xlsx", "xlsx", "csv"))
     opt$out <- file.path(getwd(), sprintf("leiloes_%s_%s.%s", site, ts, ext))
   }
 

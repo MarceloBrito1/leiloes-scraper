@@ -22,7 +22,7 @@ SITE_VALUES = {"auto", "zuk", "megaleiloes", "leeilon"}
 AUCTION_TYPE_VALUES = {"any", "judicial", "extrajudicial"}
 ROUND_VALUES = {"any", "1", "2", "ended"}
 DATE_FIELD_VALUES = {"next", "first", "second", "any"}
-FORMAT_VALUES = {"csv", "json"}
+FORMAT_VALUES = {"csv", "json", "xlsx"}
 
 DEFAULT_FORM = {
     "url": "",
@@ -168,6 +168,9 @@ def read_preview(result_file: Path, fmt: str, limit: int = 120) -> Tuple[List[st
     if not result_file.exists():
         return ([], [])
 
+    if fmt == "xlsx":
+        return ([], [])
+
     if fmt == "json":
         with result_file.open("r", encoding="utf-8") as f:
             obj = json.load(f)
@@ -184,7 +187,7 @@ def read_preview(result_file: Path, fmt: str, limit: int = 120) -> Tuple[List[st
                     cols.append(str(k))
         return (cols, rows)
 
-    with result_file.open("r", encoding="utf-8", newline="") as f:
+    with result_file.open("r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
         cols = list(reader.fieldnames or [])
         rows = []
@@ -321,7 +324,13 @@ def load_run_result(run_id: str) -> Optional[Dict]:
     if not out_file.exists():
         alt_csv = run_dir / "resultado.csv"
         alt_json = run_dir / "resultado.json"
-        out_file = alt_csv if alt_csv.exists() else alt_json
+        alt_xlsx = run_dir / "resultado.xlsx"
+        if alt_csv.exists():
+            out_file = alt_csv
+        elif alt_json.exists():
+            out_file = alt_json
+        else:
+            out_file = alt_xlsx
         fmt = out_file.suffix.lstrip(".").lower() if out_file.exists() else "csv"
 
     columns, preview_rows = read_preview(out_file, fmt=fmt)
@@ -356,7 +365,8 @@ def list_recent_runs(limit: int = 25) -> List[Dict]:
         log_file = path / "execucao.log"
         out_csv = path / "resultado.csv"
         out_json = path / "resultado.json"
-        fmt = "csv" if out_csv.exists() else "json" if out_json.exists() else ""
+        out_xlsx = path / "resultado.xlsx"
+        fmt = "csv" if out_csv.exists() else "json" if out_json.exists() else "xlsx" if out_xlsx.exists() else ""
         record_count = None
         if log_file.exists():
             record_count = parse_record_count(log_file.read_text(encoding="utf-8", errors="replace"))
@@ -416,7 +426,7 @@ def open_run(run_id: str):
 
 @app.get("/download/<run_id>/<filename>")
 def download_file(run_id: str, filename: str):
-    allowed = {"resultado.csv", "resultado.json", "execucao.log", "params.json"}
+    allowed = {"resultado.csv", "resultado.json", "resultado.xlsx", "execucao.log", "params.json"}
     if filename not in allowed:
         flash("Arquivo nao permitido para download.", "error")
         return redirect(url_for("index"))

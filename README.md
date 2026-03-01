@@ -27,6 +27,7 @@ Permite filtrar por:
 ## Requisitos
 - R (>= 4.2)
 - Pacotes R: `httr`, `xml2`, `jsonlite`, `stringr`
+- Pacote R opcional para Excel: `writexl` (necessario para `--format xlsx`)
 - Python 3.10+ (para painel web)
 
 ## Painel web (pagina local)
@@ -43,7 +44,7 @@ No painel voce consegue:
 - informar URL/site e filtros
 - informar usuario/senha (opcional) antes da raspagem
 - executar raspagem e ver preview em tabela
-- baixar `resultado`, `execucao.log` e `params.json`
+- baixar `resultado` (`.csv`, `.json` ou `.xlsx`), `execucao.log` e `params.json`
 - reabrir execucoes anteriores salvas em `local_progress/`
 
 ## Uso direto
@@ -53,6 +54,13 @@ Rscript scripts/scrape_leiloes.R --url "https://www.portalzuk.com.br/leilao-de-i
 
 Por padrao, o scraper percorre todas as paginas disponiveis.
 Use `--max-pages N` apenas se quiser limitar.
+Formatos de saida: `csv`, `json`, `xlsx`.
+
+Para gerar Excel:
+
+```bash
+Rscript scripts/scrape_leiloes.R --url "https://www.megaleiloes.com.br/imoveis?pagina=1" --site megaleiloes --format xlsx --out "resultado.xlsx"
+```
 
 ### Login por usuario/senha
 O scraper suporta sessao autenticada por cookies para Zuk, MegaLeiloes e Leeilon.
@@ -121,6 +129,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_and_archive.ps1 `
 ```
 
 Isso cria:
-- `local_progress/YYYYMMDD_HHMMSS/resultado.csv` (ou `.json`)
+- `local_progress/YYYYMMDD_HHMMSS/resultado.csv` (ou `.json` / `.xlsx`)
 - `local_progress/YYYYMMDD_HHMMSS/execucao.log`
 - `local_progress/YYYYMMDD_HHMMSS/params.json`
