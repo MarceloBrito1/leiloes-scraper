@@ -20,8 +20,8 @@ DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 SITE_VALUES = {"auto", "zuk", "megaleiloes", "leeilon"}
 AUCTION_TYPE_VALUES = {"any", "judicial", "extrajudicial"}
-ROUND_VALUES = {"any", "1", "2", "ended"}
-DATE_FIELD_VALUES = {"next", "first", "second", "any"}
+ROUND_VALUES = {"any", "1", "2", "3", "ended"}
+DATE_FIELD_VALUES = {"next", "first", "second", "third", "any"}
 FORMAT_VALUES = {"csv", "json", "xlsx"}
 
 DEFAULT_FORM = {

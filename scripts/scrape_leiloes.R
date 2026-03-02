@@ -69,11 +69,14 @@ empty_results <- function() {
     status = character(),
     price_1 = numeric(),
     price_2 = numeric(),
+    price_3 = numeric(),
     min_price = numeric(),
     auction_date_1 = character(),
     auction_date_2 = character(),
+    auction_date_3 = character(),
     auction_datetime_1 = character(),
     auction_datetime_2 = character(),
+    auction_datetime_3 = character(),
     image_url = character(),
     listing_url = character(),
     source_url = character(),
@@ -759,18 +762,26 @@ parse_iso_datetime <- function(x) {
   suppressWarnings(as.POSIXct(x, format = "%Y-%m-%d %H:%M:%S %z", tz = "America/Sao_Paulo"))
 }
 
-safe_min_future_dt <- function(dt1, dt2, now) {
-  cands <- c(dt1, dt2)
+safe_min_future_dt <- function(dt1, dt2, dt3, now) {
+  cands <- c(dt1, dt2, dt3)
   cands <- cands[!is.na(cands) & cands >= now]
   if (length(cands) == 0) return(as.POSIXct(NA))
   min(cands)
 }
 
-compute_current_round <- function(dt1, dt2, now) {
+compute_current_round <- function(dt1, dt2, dt3, now) {
   if (!is.na(dt1) && now <= dt1) return("1")
   if (!is.na(dt2) && now <= dt2) return("2")
-  if (!is.na(dt1) || !is.na(dt2)) return("ended")
+  if (!is.na(dt3) && now <= dt3) return("3")
+  if (!is.na(dt1) || !is.na(dt2) || !is.na(dt3)) return("ended")
   NA_character_
+}
+
+ensure_column <- function(df, col, value = NA) {
+  if (!col %in% colnames(df)) {
+    df[[col]] <- rep(value, nrow(df))
+  }
+  df
 }
 
 parse_date_ymd <- function(x, arg_name) {
@@ -789,6 +800,9 @@ in_date_window <- function(d, from, to) {
 }
 
 enrich_results <- function(df) {
+  df <- ensure_column(df, "auction_datetime_3", NA_character_)
+  df <- ensure_column(df, "auction_date_3", NA_character_)
+
   if (nrow(df) == 0) {
     df$auction_type_norm <- character(0)
     df$current_round <- character(0)
@@ -798,19 +812,24 @@ enrich_results <- function(df) {
 
   dt1 <- as.POSIXct(vapply(df$auction_datetime_1, function(x) parse_iso_datetime(x), as.POSIXct(NA)))
   dt2 <- as.POSIXct(vapply(df$auction_datetime_2, function(x) parse_iso_datetime(x), as.POSIXct(NA)))
+  dt3 <- as.POSIXct(vapply(df$auction_datetime_3, function(x) parse_iso_datetime(x), as.POSIXct(NA)))
 
   missing_1 <- is.na(dt1)
   missing_2 <- is.na(dt2)
+  missing_3 <- is.na(dt3)
   if (any(missing_1)) {
     dt1[missing_1] <- as.POSIXct(vapply(df$auction_date_1[missing_1], function(x) parse_datetime_br(x), as.POSIXct(NA)))
   }
   if (any(missing_2)) {
     dt2[missing_2] <- as.POSIXct(vapply(df$auction_date_2[missing_2], function(x) parse_datetime_br(x), as.POSIXct(NA)))
   }
+  if (any(missing_3)) {
+    dt3[missing_3] <- as.POSIXct(vapply(df$auction_date_3[missing_3], function(x) parse_datetime_br(x), as.POSIXct(NA)))
+  }
 
   now <- as.POSIXct(Sys.time(), tz = "America/Sao_Paulo")
-  next_dt <- as.POSIXct(vapply(seq_len(nrow(df)), function(i) safe_min_future_dt(dt1[i], dt2[i], now), as.POSIXct(NA)))
-  round_vec <- vapply(seq_len(nrow(df)), function(i) compute_current_round(dt1[i], dt2[i], now), character(1))
+  next_dt <- as.POSIXct(vapply(seq_len(nrow(df)), function(i) safe_min_future_dt(dt1[i], dt2[i], dt3[i], now), as.POSIXct(NA)))
+  round_vec <- vapply(seq_len(nrow(df)), function(i) compute_current_round(dt1[i], dt2[i], dt3[i], now), character(1))
 
   type_norm <- vapply(df$auction_type, normalize_auction_type, character(1))
   idx_zuk <- which((df$site %||% "") == "zuk" & is.na(type_norm))
@@ -848,8 +867,10 @@ apply_report_filters <- function(df, opt, verbose = FALSE) {
   if (!is.na(from_date) || !is.na(to_date)) {
     dt1 <- as.POSIXct(vapply(df$auction_datetime_1, function(x) parse_iso_datetime(x), as.POSIXct(NA)))
     dt2 <- as.POSIXct(vapply(df$auction_datetime_2, function(x) parse_iso_datetime(x), as.POSIXct(NA)))
+    dt3 <- as.POSIXct(vapply(df$auction_datetime_3, function(x) parse_iso_datetime(x), as.POSIXct(NA)))
     d1 <- as.Date(dt1)
     d2 <- as.Date(dt2)
+    d3 <- as.Date(dt3)
     dn <- as.Date(as.POSIXct(vapply(df$next_auction_datetime, function(x) parse_iso_datetime(x), as.POSIXct(NA))))
 
     field <- opt$date_field %||% "next"
@@ -858,12 +879,15 @@ apply_report_filters <- function(df, opt, verbose = FALSE) {
       cond <- vapply(d1, in_date_window, logical(1), from = from_date, to = to_date)
     } else if (field == "second") {
       cond <- vapply(d2, in_date_window, logical(1), from = from_date, to = to_date)
+    } else if (field == "third") {
+      cond <- vapply(d3, in_date_window, logical(1), from = from_date, to = to_date)
     } else if (field == "next") {
       cond <- vapply(dn, in_date_window, logical(1), from = from_date, to = to_date)
     } else if (field == "any") {
       c1 <- vapply(d1, in_date_window, logical(1), from = from_date, to = to_date)
       c2 <- vapply(d2, in_date_window, logical(1), from = from_date, to = to_date)
-      cond <- c1 | c2
+      c3 <- vapply(d3, in_date_window, logical(1), from = from_date, to = to_date)
+      cond <- c1 | c2 | c3
     } else {
       stop("Unsupported --date-field: ", field)
     }
@@ -967,13 +991,16 @@ extract_zuk_cards <- function(doc, source_url) {
 
     price_1 <- parse_money_br(price_values[1] %||% NA_character_)
     price_2 <- parse_money_br(price_values[2] %||% NA_character_)
-    min_price <- suppressWarnings(min(c(price_1, price_2), na.rm = TRUE))
+    price_3 <- parse_money_br(price_values[3] %||% NA_character_)
+    min_price <- suppressWarnings(min(c(price_1, price_2, price_3), na.rm = TRUE))
     if (!is.finite(min_price)) min_price <- NA_real_
 
     auction_date_1 <- normalize_ws(price_dates[1] %||% NA_character_)
     auction_date_2 <- normalize_ws(price_dates[2] %||% NA_character_)
+    auction_date_3 <- normalize_ws(price_dates[3] %||% NA_character_)
     dt1 <- parse_datetime_br(auction_date_1)
     dt2 <- parse_datetime_br(auction_date_2)
+    dt3 <- parse_datetime_br(auction_date_3)
 
     if (is.na(listing_id)) listing_id <- extract_id_from_url(listing_url)
     if (is.na(title)) title <- property_type %||% city_uf
@@ -991,11 +1018,14 @@ extract_zuk_cards <- function(doc, source_url) {
       status = NA_character_,
       price_1 = price_1,
       price_2 = price_2,
+      price_3 = price_3,
       min_price = min_price,
       auction_date_1 = auction_date_1,
       auction_date_2 = auction_date_2,
+      auction_date_3 = auction_date_3,
       auction_datetime_1 = fmt_datetime(dt1),
       auction_datetime_2 = fmt_datetime(dt2),
+      auction_datetime_3 = fmt_datetime(dt3),
       image_url = image_url,
       listing_url = listing_url,
       source_url = source_url,
@@ -1142,14 +1172,21 @@ extract_mega_cards <- function(doc, source_url) {
     price_values <- safe_text_vec(xml2::xml_find_all(card, ".//div[contains(@class,'card-instance-info')]//span[contains(@class,'card-instance-value')]"))
     price_1 <- parse_money_br(price_values[1] %||% NA_character_)
     price_2 <- parse_money_br(price_values[2] %||% NA_character_)
+    price_3 <- parse_money_br(price_values[3] %||% NA_character_)
     if (is.na(price_1)) price_1 <- parse_money_br(safe_text(xml2::xml_find_first(card, ".//div[contains(@class,'card-price')][1]")))
-    min_price <- suppressWarnings(min(c(price_1, price_2), na.rm = TRUE))
+    min_price <- suppressWarnings(min(c(price_1, price_2, price_3), na.rm = TRUE))
     if (!is.finite(min_price)) min_price <- NA_real_
 
     auction_date_1 <- safe_text(xml2::xml_find_first(card, ".//span[contains(@class,'card-first-instance-date')][1]"))
     auction_date_2 <- safe_text(xml2::xml_find_first(card, ".//span[contains(@class,'card-second-instance-date')][1]"))
+    auction_date_3 <- safe_text(xml2::xml_find_first(card, ".//span[contains(@class,'card-third-instance-date')][1]"))
+    if (is.na(auction_date_3)) {
+      date_values <- safe_text_vec(xml2::xml_find_all(card, ".//span[contains(@class,'card-instance-date') or contains(@class,'card-instance-data')]"))
+      if (length(date_values) >= 3) auction_date_3 <- date_values[[3]]
+    }
     dt1 <- parse_datetime_br(auction_date_1)
     dt2 <- parse_datetime_br(auction_date_2)
+    dt3 <- parse_datetime_br(auction_date_3)
 
     property_type <- NA_character_
     p <- httr::parse_url(listing_url)
@@ -1171,11 +1208,14 @@ extract_mega_cards <- function(doc, source_url) {
       status = status,
       price_1 = price_1,
       price_2 = price_2,
+      price_3 = price_3,
       min_price = min_price,
       auction_date_1 = auction_date_1,
       auction_date_2 = auction_date_2,
+      auction_date_3 = auction_date_3,
       auction_datetime_1 = fmt_datetime(dt1),
       auction_datetime_2 = fmt_datetime(dt2),
+      auction_datetime_3 = fmt_datetime(dt3),
       image_url = image_url,
       listing_url = listing_url,
       source_url = source_url,
@@ -1297,6 +1337,16 @@ leeilon_listing_url <- function(item) {
   paste0("https://www.leeilon.com.br/imovel-em-leilao/", estado, "/", cidade, "/", titulo, "/", id)
 }
 
+pick_item_field <- function(item, keys, default = NA_character_) {
+  for (k in keys) {
+    if (!is.null(item[[k]])) {
+      v <- normalize_ws(item[[k]])
+      if (!is.na(v)) return(v)
+    }
+  }
+  default
+}
+
 extract_leeilon_rows <- function(items, source_url) {
   if (length(items) == 0) return(empty_results())
   if (!is.list(items)) return(empty_results())
@@ -1320,14 +1370,17 @@ extract_leeilon_rows <- function(items, source_url) {
     address_parts <- address_parts[!is.na(address_parts)]
     address <- if (length(address_parts) > 0) paste(address_parts, collapse = " | ") else NA_character_
 
-    auction_date_1 <- normalize_ws(item$data_1_praca %||% NA_character_)
-    auction_date_2 <- normalize_ws(item$data_2_praca %||% NA_character_)
+    auction_date_1 <- pick_item_field(item, c("data_1_praca", "data_1_leilao"))
+    auction_date_2 <- pick_item_field(item, c("data_2_praca", "data_2_leilao"))
+    auction_date_3 <- pick_item_field(item, c("data_3_praca", "data_3_leilao"))
     dt1 <- parse_datetime_br(auction_date_1)
     dt2 <- parse_datetime_br(auction_date_2)
+    dt3 <- parse_datetime_br(auction_date_3)
 
-    price_1 <- parse_money_br(item$valor_1_praca %||% item$lance_inicial %||% NA_character_)
-    price_2 <- parse_money_br(item$valor_2_praca %||% NA_character_)
-    min_price <- suppressWarnings(min(c(price_1, price_2), na.rm = TRUE))
+    price_1 <- parse_money_br(pick_item_field(item, c("valor_1_praca", "valor_1_leilao", "lance_inicial")))
+    price_2 <- parse_money_br(pick_item_field(item, c("valor_2_praca", "valor_2_leilao")))
+    price_3 <- parse_money_br(pick_item_field(item, c("valor_3_praca", "valor_3_leilao")))
+    min_price <- suppressWarnings(min(c(price_1, price_2, price_3), na.rm = TRUE))
     if (!is.finite(min_price)) min_price <- NA_real_
 
     rows[[i]] <- data.frame(
@@ -1343,11 +1396,14 @@ extract_leeilon_rows <- function(items, source_url) {
       status = NA_character_,
       price_1 = price_1,
       price_2 = price_2,
+      price_3 = price_3,
       min_price = min_price,
       auction_date_1 = auction_date_1,
       auction_date_2 = auction_date_2,
+      auction_date_3 = auction_date_3,
       auction_datetime_1 = fmt_datetime(dt1),
       auction_datetime_2 = fmt_datetime(dt2),
+      auction_datetime_3 = fmt_datetime(dt3),
       image_url = normalize_ws(item$imagem_propriedade %||% NA_character_),
       listing_url = listing_url,
       source_url = source_url,
@@ -1471,7 +1527,6 @@ max_pages_label <- function(x) {
 }
 
 localize_output_columns <- function(df) {
-  if (nrow(df) == 0) return(df)
   map <- c(
     site = "site",
     listing_id = "id_imovel",
@@ -1485,11 +1540,14 @@ localize_output_columns <- function(df) {
     status = "status",
     price_1 = "valor_1_leilao",
     price_2 = "valor_2_leilao",
+    price_3 = "valor_3_leilao",
     min_price = "menor_valor",
     auction_date_1 = "data_1_leilao",
     auction_date_2 = "data_2_leilao",
+    auction_date_3 = "data_3_leilao",
     auction_datetime_1 = "datahora_1_leilao",
     auction_datetime_2 = "datahora_2_leilao",
+    auction_datetime_3 = "datahora_3_leilao",
     image_url = "url_imagem",
     listing_url = "url_imovel",
     source_url = "url_busca_origem",
@@ -1513,10 +1571,10 @@ usage <- function() {
     "  --max-pages <N|all>                      Maximo de paginas/blocos (padrao: all)\n",
     "  --sleep <segundos>                       Espera entre requisicoes (padrao: 0.75)\n",
     "  --auction-type <any|judicial|extrajudicial>  Filtra por modalidade\n",
-    "  --current-round <any|1|2|ended>          Filtra pela fase atual do leilao\n",
+    "  --current-round <any|1|2|3|ended>        Filtra pela fase atual do leilao\n",
     "  --date-from <YYYY-MM-DD>                 Inicio da janela de data\n",
     "  --date-to <YYYY-MM-DD>                   Fim da janela de data\n",
-    "  --date-field <next|first|second|any>     Campo de data para filtro (padrao: next)\n",
+    "  --date-field <next|first|second|third|any> Campo de data para filtro (padrao: next)\n",
     "  --format <csv|json|xlsx>                 Formato de saida (padrao: csv)\n",
     "  --out <arquivo>                          Caminho do arquivo de saida\n",
     "  --verbose                                Logs detalhados (padrao: ligado)\n",
@@ -1679,11 +1737,11 @@ main <- function() {
   if (!opt$auction_type %in% c("any", "judicial", "extrajudicial")) {
     stop("--auction-type must be one of: any, judicial, extrajudicial")
   }
-  if (!opt$current_round %in% c("any", "1", "2", "ended")) {
-    stop("--current-round must be one of: any, 1, 2, ended")
+  if (!opt$current_round %in% c("any", "1", "2", "3", "ended")) {
+    stop("--current-round must be one of: any, 1, 2, 3, ended")
   }
-  if (!opt$date_field %in% c("next", "first", "second", "any")) {
-    stop("--date-field must be one of: next, first, second, any")
+  if (!opt$date_field %in% c("next", "first", "second", "third", "any")) {
+    stop("--date-field must be one of: next, first, second, third, any")
   }
 
   site <- normalize_site(opt$site)

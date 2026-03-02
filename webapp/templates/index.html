@@ -92,6 +92,7 @@
               <option value="any" {% if form.current_round == "any" %}selected{% endif %}>any</option>
               <option value="1" {% if form.current_round == "1" %}selected{% endif %}>1</option>
               <option value="2" {% if form.current_round == "2" %}selected{% endif %}>2</option>
+              <option value="3" {% if form.current_round == "3" %}selected{% endif %}>3</option>
               <option value="ended" {% if form.current_round == "ended" %}selected{% endif %}>ended</option>
             </select>
           </div>
@@ -102,6 +103,7 @@
               <option value="next" {% if form.date_field == "next" %}selected{% endif %}>next</option>
               <option value="first" {% if form.date_field == "first" %}selected{% endif %}>first</option>
               <option value="second" {% if form.date_field == "second" %}selected{% endif %}>second</option>
+              <option value="third" {% if form.date_field == "third" %}selected{% endif %}>third</option>
               <option value="any" {% if form.date_field == "any" %}selected{% endif %}>any</option>
             </select>
           </div>

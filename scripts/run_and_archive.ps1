@@ -11,13 +11,13 @@ param(
   [ValidateSet('any','judicial','extrajudicial')]
   [string]$AuctionType = 'any',
 
-  [ValidateSet('any','1','2','ended')]
+  [ValidateSet('any','1','2','3','ended')]
   [string]$CurrentRound = 'any',
 
   [string]$DateFrom = '',
   [string]$DateTo = '',
 
-  [ValidateSet('next','first','second','any')]
+  [ValidateSet('next','first','second','third','any')]
   [string]$DateField = 'next',
 
   [ValidateSet('csv','json','xlsx')]

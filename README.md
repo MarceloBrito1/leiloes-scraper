@@ -7,15 +7,16 @@ Projeto separado para raspagem de oportunidades de leiloes imobiliarios.
 - Suporta `megaleiloes.com.br` com paginacao por `?pagina=`.
 - Suporta `leeilon.com.br` via endpoint dinamico oficial (server action), com paginacao por `page`.
 - Percorre todas as paginas por padrao (`--max-pages all`).
+- Captura informacoes de 1º, 2º e 3º leilao (quando o site expuser 3ª praca/rodada).
 - Faz sanitizacao automatica da URL de entrada (remove wrappers/redirecionadores e entra direto na rota de busca), reduzindo impacto de popups/anuncios de entrada.
 - Possui retentativa automatica com backoff para respostas `HTTP 429`/`5xx`, reduzindo falhas por bloqueio de taxa.
 
 ## Filtros de relatorio
 Permite filtrar por:
 - modalidade (`--auction-type any|judicial|extrajudicial`)
-- fase atual (`--current-round any|1|2|ended`)
+- fase atual (`--current-round any|1|2|3|ended`)
 - janela de datas (`--date-from`, `--date-to`)
-- campo de data (`--date-field next|first|second|any`)
+- campo de data (`--date-field next|first|second|third|any`)
 
 ## Filtros nativos dos sites
 - MegaLeiloes: quando `--auction-type` e informado, o scraper usa rota nativa:
