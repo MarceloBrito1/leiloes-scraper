@@ -188,7 +188,10 @@ def read_preview(result_file: Path, fmt: str, limit: int = 120) -> Tuple[List[st
         return (cols, rows)
 
     with result_file.open("r", encoding="utf-8-sig", newline="") as f:
-        reader = csv.DictReader(f)
+        sample = f.read(4096)
+        f.seek(0)
+        delimiter = ";" if sample.count(";") > sample.count(",") else ","
+        reader = csv.DictReader(f, delimiter=delimiter)
         cols = list(reader.fieldnames or [])
         rows = []
         for idx, row in enumerate(reader):

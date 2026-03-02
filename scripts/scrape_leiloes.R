@@ -1470,6 +1470,40 @@ max_pages_label <- function(x) {
   if (is.na(x)) "all" else as.character(x)
 }
 
+localize_output_columns <- function(df) {
+  if (nrow(df) == 0) return(df)
+  map <- c(
+    site = "site",
+    listing_id = "id_imovel",
+    title = "titulo",
+    property_type = "tipo_imovel",
+    city_uf = "cidade_uf",
+    address = "endereco",
+    area_info = "informacoes_area",
+    auction_type = "modalidade_leilao",
+    lot = "lote",
+    status = "status",
+    price_1 = "valor_1_leilao",
+    price_2 = "valor_2_leilao",
+    min_price = "menor_valor",
+    auction_date_1 = "data_1_leilao",
+    auction_date_2 = "data_2_leilao",
+    auction_datetime_1 = "datahora_1_leilao",
+    auction_datetime_2 = "datahora_2_leilao",
+    image_url = "url_imagem",
+    listing_url = "url_imovel",
+    source_url = "url_busca_origem",
+    scraped_at = "coletado_em",
+    auction_type_norm = "modalidade_normalizada",
+    current_round = "fase_atual",
+    next_auction_datetime = "proximo_leilao_em"
+  )
+  current <- colnames(df)
+  renamed <- ifelse(current %in% names(map), unname(map[current]), current)
+  colnames(df) <- renamed
+  df
+}
+
 usage <- function() {
   cat(
     "Uso:\n",
@@ -1591,10 +1625,20 @@ write_output <- function(df, out_path, fmt) {
     }
     writexl::write_xlsx(list(resultado = df), path = out_path)
   } else {
-    # UTF-8 BOM improves accent rendering when opening CSV directly in Excel.
+    # UTF-8 BOM + ';' separator improves accent/column rendering in Excel pt-BR.
     tmp <- tempfile(fileext = ".csv")
     on.exit(unlink(tmp), add = TRUE)
-    utils::write.csv(df, tmp, row.names = FALSE, fileEncoding = "UTF-8")
+    utils::write.table(
+      df,
+      file = tmp,
+      sep = ";",
+      dec = ",",
+      row.names = FALSE,
+      col.names = TRUE,
+      quote = TRUE,
+      na = "",
+      fileEncoding = "UTF-8"
+    )
     raw_csv <- readBin(tmp, what = "raw", n = file.info(tmp)$size)
     con <- file(out_path, open = "wb")
     on.exit(close(con), add = TRUE)
@@ -1706,6 +1750,7 @@ main <- function() {
   res <- dedupe_results(res)
   res <- apply_report_filters(res, opt = opt, verbose = opt$verbose)
   res <- res[order(res$site, res$listing_id, res$listing_url), , drop = FALSE]
+  res <- localize_output_columns(res)
 
   if (is.null(opt$out) || !nzchar(opt$out)) {
     ts <- format(Sys.time(), "%Y%m%d_%H%M%S")

@@ -55,6 +55,8 @@ Rscript scripts/scrape_leiloes.R --url "https://www.portalzuk.com.br/leilao-de-i
 Por padrao, o scraper percorre todas as paginas disponiveis.
 Use `--max-pages N` apenas se quiser limitar.
 Formatos de saida: `csv`, `json`, `xlsx`.
+- `csv`: gerado em UTF-8 com BOM, separador `;` (compativel com Excel pt-BR) e cabecalhos em portugues.
+- `xlsx`: recomendado para abrir direto no Excel sem ajustes de importacao.
 
 Para gerar Excel:
 
